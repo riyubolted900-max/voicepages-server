@@ -1,11 +1,10 @@
 """
 Voice Assigner - Assign TTS voices to characters
-Uses macOS built-in voices - no setup needed!
+Works with both Kokoro and macOS Speech voices.
 """
 
 import json
 import logging
-import subprocess
 from typing import Dict, List
 import httpx
 
@@ -14,170 +13,121 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-# Available voices from macOS Speech
-# These work out of the box on any Mac!
+# Unified voice list that works with both Kokoro and macOS Speech
 AVAILABLE_VOICES = [
-    # American Female - Premium (Neural)
-    {"id": "af_nova", "name": "Nova", "gender": "female", "accent": "american", "style": "neural", "quality": "premium"},
-    {"id": "af_shimmer", "name": "Shimmer", "gender": "female", "accent": "american", "style": "neural", "quality": "premium"},
-    
-    # American Female - Standard
-    {"id": "af_samantha", "name": "Samantha", "gender": "female", "accent": "american", "style": "clear", "quality": "standard"},
-    {"id": "af_zoey", "name": "Zoey", "gender": "female", "accent": "american", "style": "young", "quality": "standard"},
-    {"id": "af_allison", "name": "Allison", "gender": "female", "accent": "american", "style": "warm", "quality": "standard"},
-    {"id": "af_ava", "name": "Ava", "gender": "female", "accent": "american", "style": "modern", "quality": "standard"},
-    {"id": "af_victoria", "name": "Victoria", "gender": "female", "accent": "american", "style": "professional", "quality": "standard"},
-    
-    # American Male
-    {"id": "am_alex", "name": "Alex", "gender": "male", "accent": "american", "style": "default", "quality": "standard"},
-    {"id": "am_daniel", "name": "Daniel", "gender": "male", "accent": "american", "style": "deep", "quality": "standard"},
-    {"id": "am_fred", "name": "Fred", "gender": "male", "accent": "american", "style": "robotic", "quality": "standard"},
-    
-    # British Female
-    {"id": "bf_amelie", "name": "Amelie", "gender": "female", "accent": "british", "style": "elegant", "quality": "standard"},
-    
-    # British Male
-    {"id": "bm_daniel", "name": "Daniel (UK)", "gender": "male", "accent": "british", "style": "professional", "quality": "standard"},
-    {"id": "bm_oliver", "name": "Oliver", "gender": "male", "accent": "british", "style": "formal", "quality": "standard"},
+    # Female American
+    {"id": "af_sky", "name": "Sky", "gender": "female", "accent": "american", "style": "calm"},
+    {"id": "af_heart", "name": "Heart", "gender": "female", "accent": "american", "style": "warm"},
+    {"id": "af_bella", "name": "Bella", "gender": "female", "accent": "american", "style": "bright"},
+    {"id": "af_nova", "name": "Nova", "gender": "female", "accent": "american", "style": "confident"},
+    {"id": "af_sarah", "name": "Sarah", "gender": "female", "accent": "american", "style": "friendly"},
+    {"id": "af_nicole", "name": "Nicole", "gender": "female", "accent": "american", "style": "smooth"},
+
+    # Male American
+    {"id": "am_adam", "name": "Adam", "gender": "male", "accent": "american", "style": "deep"},
+    {"id": "am_echo", "name": "Echo", "gender": "male", "accent": "american", "style": "energetic"},
+    {"id": "am_michael", "name": "Michael", "gender": "male", "accent": "american", "style": "steady"},
+    {"id": "am_liam", "name": "Liam", "gender": "male", "accent": "american", "style": "casual"},
+
+    # Female British
+    {"id": "bf_alice", "name": "Alice", "gender": "female", "accent": "british", "style": "gentle"},
+    {"id": "bf_emma", "name": "Emma", "gender": "female", "accent": "british", "style": "authoritative"},
+    {"id": "bf_lily", "name": "Lily", "gender": "female", "accent": "british", "style": "sweet"},
+    {"id": "bf_isabella", "name": "Isabella", "gender": "female", "accent": "british", "style": "elegant"},
+
+    # Male British
+    {"id": "bm_daniel", "name": "Daniel", "gender": "male", "accent": "british", "style": "warm"},
+    {"id": "bm_george", "name": "George", "gender": "male", "accent": "british", "style": "distinguished"},
+    {"id": "bm_lewis", "name": "Lewis", "gender": "male", "accent": "british", "style": "clear"},
+    {"id": "bm_fable", "name": "Fable", "gender": "male", "accent": "british", "style": "animated"},
 ]
 
-# Legacy IDs for compatibility
-LEGACY_VOICE_MAP = {
-    "af_sky": "af_samantha",
-    "af_heart": "af_victoria",
-    "af_bella": "af_zoey",
-    "af_sarah": "af_allison",
-    "am_adam": "am_daniel",
-    "am_echo": "am_alex",
-    "am_michael": "am_daniel",
-    "bm_daniel": "bm_daniel",
-    "bm_george": "bm_oliver",
-    "bm_felix": "bm_oliver",
-    "bf_alice": "bf_amelie",
-    "bf_emma": "bf_amelie",
-    "bf_isabella": "bf_amelie",
-}
+VOICE_BY_ID = {v["id"]: v for v in AVAILABLE_VOICES}
 
 
 class VoiceAssigner:
-    """
-    Assign TTS voices to characters based on their properties.
-    Uses macOS built-in voices - works instantly!
-    """
-    
+    """Assign TTS voices to characters based on their properties."""
+
     def __init__(self):
         self.available_voices = AVAILABLE_VOICES
         self.ollama_url = settings.ollama_url
         self.llm_model = settings.llm_model
-        
-        # Build lookup maps
+
         self.voices_by_gender = {
             "male": [v for v in self.available_voices if v["gender"] == "male"],
             "female": [v for v in self.available_voices if v["gender"] == "female"],
         }
-        
-        # Default narrator voice (warm, clear)
-        self.narrator_voice = "af_samantha"
-    
+
+        self.narrator_voice = "af_sky"
+
     def get_available_voices(self) -> List[Dict]:
-        """Return list of all available TTS voices."""
         return self.available_voices
-    
-    def _normalize_voice_id(self, voice_id: str) -> str:
-        """Normalize voice ID to current format."""
-        return LEGACY_VOICE_MAP.get(voice_id, voice_id)
-    
+
     async def assign_voices(self, characters: Dict) -> Dict:
         """
         Assign voices to detected characters.
-        
-        Args:
-            characters: Dict of character_name -> {gender, role, description}
-        
+
         Returns:
-            Dict of character_name -> {voice_id, reasoning}
+            Dict of character_name -> {voice_id, voice_name, reasoning}
         """
         assignments = {}
-        
-        # Separate main characters from minor
-        main_chars = {k: v for k, v in characters.items() 
-                     if v.get("role") == "main"}
-        supporting = {k: v for k, v in characters.items() 
-                     if v.get("role") == "supporting"}
-        
-        # Assign voices to main characters (ensure variety)
         used_voices = set()
-        
-        for i, (char_name, char_data) in enumerate(main_chars.items()):
+
+        # Sort: main first, then supporting, then minor
+        role_order = {"main": 0, "supporting": 1, "minor": 2, "system": 3}
+        sorted_chars = sorted(
+            characters.items(),
+            key=lambda x: role_order.get(x[1].get("role", "minor"), 2)
+        )
+
+        for char_name, char_data in sorted_chars:
+            if char_name.lower() == "narrator" or char_data.get("role") == "system":
+                assignments["Narrator"] = {
+                    "voice_id": self.narrator_voice,
+                    "voice_name": "Sky",
+                    "reasoning": "Default narrator voice (calm, neutral)"
+                }
+                used_voices.add(self.narrator_voice)
+                continue
+
             gender = char_data.get("gender", "unknown")
-            
-            if gender == "male":
-                candidates = self.voices_by_gender.get("male", [])
-            elif gender == "female":
-                candidates = self.voices_by_gender.get("female", [])
+
+            if gender in ("male", "female"):
+                candidates = self.voices_by_gender.get(gender, [])
             else:
-                # Default to female
-                candidates = self.voices_by_gender.get("female", [])
-            
-            # Filter out used voices to maximize variety
+                candidates = self.available_voices
+
             available = [v for v in candidates if v["id"] not in used_voices]
-            
+            if not available:
+                available = candidates
+
             if available:
                 voice = available[0]
                 used_voices.add(voice["id"])
-            elif candidates:
-                voice = candidates[0]
             else:
-                voice = {"id": self.narrator_voice, "name": "Samantha"}
-            
+                voice = {"id": self.narrator_voice, "name": "Sky", "style": "calm"}
+
             assignments[char_name] = {
                 "voice_id": voice["id"],
                 "voice_name": voice.get("name", voice["id"]),
-                "reasoning": f"Assigned {voice['style']} voice for {gender} character"
+                "reasoning": f"Assigned {voice.get('style', 'default')} voice for {gender} character"
             }
-        
-        # Handle narrator
-        if "Narrator" in characters:
-            assignments["Narrator"] = {
-                "voice_id": self.narrator_voice,
-                "voice_name": "Samantha",
-                "reasoning": "Default narrator voice (clear, warm)"
-            }
-        
-        # Minor characters reuse voices
-        minor_voices = list(used_voices) if used_voices else [self.narrator_voice]
-        for i, (char_name, char_data) in enumerate(supporting.items()):
-            voice_id = minor_voices[i % len(minor_voices)]
-            assignments[char_name] = {
-                "voice_id": voice_id,
-                "voice_name": next((v["name"] for v in self.available_voices if v["id"] == voice_id), voice_id),
-                "reasoning": "Supporting character voice"
-            }
-        
+
         logger.info(f"Assigned voices to {len(assignments)} characters")
         return assignments
-    
-    async def assign_voice_with_llm(
-        self, 
-        character_name: str, 
-        character_description: str
-    ) -> Dict:
-        """
-        Use LLM to intelligently assign a voice based on character description.
-        """
+
+    async def assign_voice_with_llm(self, character_name: str, character_description: str) -> Dict:
+        """Use LLM to intelligently assign a voice."""
         voices_json = json.dumps(self.available_voices[:10])
-        
-        prompt = f"""You are a voice casting director. Given a character's description, 
-select the best voice from this list:
+
+        prompt = f"""You are a voice casting director. Select the best voice for this character:
 
 {voices_json}
 
 Character: {character_name}
 Description: {character_description}
 
-Return ONLY JSON with:
-{{"voice_id": "the voice id", "reasoning": "brief explanation why this voice fits"}}
-
+Return ONLY JSON: {{"voice_id": "id", "reasoning": "why"}}
 JSON:"""
 
         try:
@@ -191,22 +141,19 @@ JSON:"""
                         "format": "json"
                     }
                 )
-                
+
                 if response.status_code == 200:
                     result = response.json()
                     text = result.get("response", "{}")
                     data = json.loads(text)
-                    
+                    voice_id = data.get("voice_id", self.narrator_voice)
+                    if voice_id not in VOICE_BY_ID:
+                        voice_id = self.narrator_voice
                     return {
-                        "voice_id": self._normalize_voice_id(data.get("voice_id", self.narrator_voice)),
+                        "voice_id": voice_id,
                         "reasoning": data.get("reasoning", "Default assignment")
                     }
-        
         except Exception as e:
             logger.warning(f"LLM voice assignment failed: {e}")
-        
-        # Fallback
-        return {
-            "voice_id": self.narrator_voice,
-            "reasoning": "Default fallback"
-        }
+
+        return {"voice_id": self.narrator_voice, "reasoning": "Default fallback"}

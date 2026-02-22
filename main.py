@@ -146,7 +146,12 @@ async def init_db():
                 UNIQUE(book_id, chapter_id)
             )
         """)
-        
+
+        # Indices for common queries
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_chapters_book_id ON chapters(book_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_characters_book_id ON characters(book_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_book_id ON bookmarks(book_id)")
+
         await db.commit()
 
 
@@ -161,13 +166,11 @@ app = FastAPI(
 # Configure CORS for local network access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for local development
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-logger.info(f"VoicePages Server started")
 
 
 # ============================================================================
@@ -418,9 +421,10 @@ async def generate_chapter_audio(
         )
         
         # Cache the audio
+        import aiofiles
         audio_path = AUDIO_DIR / f"{book_id}_{chapter_id}.wav"
-        with open(audio_path, 'wb') as f:
-            f.write(audio_bytes)
+        async with aiofiles.open(audio_path, 'wb') as f:
+            await f.write(audio_bytes)
         
         # Save to cache table
         await db.execute(
@@ -501,39 +505,45 @@ async def get_characters(book_id: str, db: aiosqlite.Connection = Depends(get_db
 async def update_character_voice(
     book_id: str,
     char_name: str,
-    voice_id: str,
-    x_api_key: str = Header(None),
+    body: dict,
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    """Update a character's assigned voice. Requires auth."""
-    await verify_api_key(x_api_key)
+    """Update a character's assigned voice."""
+    voice_id = body.get("voice_id")
+    if not voice_id:
+        raise HTTPException(status_code=400, detail="voice_id required in body")
+
+    # Validate voice_id exists
+    valid_ids = {v["id"] for v in voice_assigner.get_available_voices()}
+    if voice_id not in valid_ids:
+        raise HTTPException(status_code=400, detail=f"Invalid voice_id: {voice_id}")
+
     await db.execute(
         "UPDATE characters SET voice_id = ? WHERE book_id = ? AND name = ?",
         (voice_id, book_id, char_name)
     )
     await db.commit()
-    
+
     return {"status": "updated", "character": char_name, "voice_id": voice_id}
 
 
 @app.post("/api/books/{book_id}/bookmark")
 async def save_bookmark(
     book_id: str,
-    chapter_id: int,
-    position: float,
+    body: dict,
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """Save reading position bookmark."""
-    # Delete old bookmark for this book
+    chapter_id = body.get("chapter_id", 1)
+    position = body.get("position", 0.0)
+
     await db.execute("DELETE FROM bookmarks WHERE book_id = ?", (book_id,))
-    
-    # Insert new bookmark
     await db.execute(
         "INSERT INTO bookmarks (book_id, chapter_id, position) VALUES (?, ?, ?)",
         (book_id, chapter_id, position)
     )
     await db.commit()
-    
+
     return {"status": "saved", "book_id": book_id, "chapter_id": chapter_id, "position": position}
 
 
@@ -587,9 +597,7 @@ async def generate_tts(
 
 
 @app.delete("/api/books/{book_id}")
-async def delete_book(book_id: str, x_api_key: str = Header(None), db: aiosqlite.Connection = Depends(get_db)):
-    """Delete a book and all associated data. Requires auth."""
-    await verify_api_key(x_api_key)
+async def delete_book(book_id: str, db: aiosqlite.Connection = Depends(get_db)):
     """Delete a book and all associated data."""
     await db.execute("DELETE FROM audio_cache WHERE book_id = ?", (book_id,))
     await db.execute("DELETE FROM bookmarks WHERE book_id = ?", (book_id,))

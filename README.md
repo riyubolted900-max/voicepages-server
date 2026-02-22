@@ -1,72 +1,70 @@
-# VoicePages 🚀
+# VoicePages
 AI-Powered Multi-Voice Audiobook Reader
 
-Transforms ebooks (EPUB, PDF, TXT) into audiobooks with different voices for each character.
+Transforms ebooks (EPUB, PDF, TXT, DOCX) into audiobooks with different voices for each character.
 
-## One-Line Setup
+## One-Line Install & Start
 
 ```bash
-cd ~ && rm -rf voicepages-server && git clone https://github.com/riyubolted900-max/voicepages-server.git && cd voicepages-server && chmod +x voicepages.sh && ./voicepages.sh start
+git clone https://github.com/riyubolted900-max/voicepages-server.git ~/voicepages-server && cd ~/voicepages-server && chmod +x voicepages.sh && ./voicepages.sh install && ./voicepages.sh start
 ```
 
 ## Commands
 
 ```bash
-./voicepages.sh start      # Start server
+./voicepages.sh install    # Install dependencies
+./voicepages.sh start      # Start server (background)
 ./voicepages.sh stop       # Stop server
-./voicepages.sh restart   # Restart server
-./voicepages.sh uninstall # Remove everything
+./voicepages.sh restart    # Restart server
+./voicepages.sh status     # Check if running + show URLs
+./voicepages.sh logs       # View server logs
+./voicepages.sh uninstall  # Remove venv, storage, cached data
 ```
 
 ## Access
 
-- **iPhone:** `http://YOUR_MAC_IP:3000`
-- **Server:** `http://YOUR_MAC_IP:9000`
-- Find IP: System Settings → Network → Wi-Fi → IP Address
+Once running, the server serves both the API and web app on port 9000:
 
-## First Time Setup
+- **On Mac:** http://localhost:9000
+- **On iPhone:** http://YOUR_MAC_IP:9000
+- Find your Mac's IP: `ipconfig getifaddr en0`
 
-1. Open browser to `http://localhost:3000`
-2. Go to Settings ⚙️
-3. Set Server URL to `http://localhost:9000`
-4. Upload a book and start listening!
+## First Time
+
+1. Run the install command above
+2. Open http://localhost:9000 in your browser
+3. Upload a book (EPUB, PDF, TXT, or DOCX)
+4. Start listening with multi-voice audio!
+
+On iPhone: connect to the same WiFi, open `http://<mac-ip>:9000`
+
+## Optional: Better Voices with Ollama
+
+For automatic character detection and smarter voice assignment:
+
+```bash
+brew install ollama
+ollama pull llama3.2:3b
+ollama serve
+```
 
 ## Troubleshooting
 
 **Can't connect from iPhone?**
-- Make sure Mac and iPhone on same WiFi
-- Use bridged networking in VM (if using VM)
-- Check firewall: System Settings → Network → Firewall
+- Mac and iPhone must be on the same WiFi network
+- Check firewall: System Settings > Network > Firewall (allow port 9000)
 
 **No audio?**
-- Server uses macOS Speech - works automatically!
-- Try different voices in book settings
-
----
-
-## Development
-
-```bash
-# Install
-pip install -r requirements.txt
-
-# Run
-uvicorn main:app --host 0.0.0.0 --port 9000
-
-# Web app
-cd ../voicepages-web
-npm install && npm run dev
-```
-
----
+- macOS Speech works by default with no setup
+- Check logs: `./voicepages.sh logs`
 
 ## Tech Stack
 
-- **Server:** FastAPI, SQLite, Python
-- **TTS:** macOS Speech (built-in)
-- **Web:** React, Vite, PWA
-
----
+- **Server:** FastAPI, SQLite (aiosqlite), Python
+- **TTS:** macOS Speech (built-in), Kokoro TTS (optional, better quality)
+- **LLM:** Ollama + Llama 3.2 (optional, for character detection)
+- **Web:** React, Vite, Zustand, Howler.js, PWA
+- **Formats:** EPUB, PDF, DOCX, TXT
 
 ## License
 
