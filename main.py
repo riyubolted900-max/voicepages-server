@@ -657,16 +657,6 @@ if WEB_APP_DIR.exists():
             return FileResponse(str(file_path))
         raise HTTPException(status_code=404, detail="Asset not found")
     
-    # Serve manifest
-    @app.get("/manifest.webmanifest")
-    async def serve_manifest():
-        return FileResponse(str(WEB_APP_DIR / "manifest.webmanifest"))
-    
-    # Serve service worker
-    @app.get("/registerSW.js")
-    async def serve_sw():
-        return FileResponse(str(WEB_APP_DIR / "registerSW.js"))
-    
     # Serve test page
     @app.get("/test_audio.html")
     async def serve_test_audio():
@@ -681,6 +671,14 @@ if WEB_APP_DIR.exists():
         favicon_path = WEB_APP_DIR / "favicon.svg"
         if favicon_path.exists():
             return FileResponse(str(favicon_path))
+        raise HTTPException(status_code=404)
+
+    # Serve debug page
+    @app.get("/debug.html")
+    async def serve_debug():
+        debug_path = WEB_APP_DIR / "debug.html"
+        if debug_path.exists():
+            return FileResponse(str(debug_path))
         raise HTTPException(status_code=404)
 
     # SPA fallback
