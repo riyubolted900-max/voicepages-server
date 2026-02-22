@@ -6,7 +6,11 @@ Transforms ebooks (EPUB, PDF, TXT, DOCX) into audiobooks with different voices f
 ## One-Line Install & Start
 
 ```bash
+# Fresh install:
 git clone https://github.com/riyubolted900-max/voicepages-server.git ~/voicepages-server && cd ~/voicepages-server && chmod +x voicepages.sh && ./voicepages.sh install && ./voicepages.sh start
+
+# If already cloned (update & start):
+cd ~/voicepages-server && git pull && ./voicepages.sh install && ./voicepages.sh start
 ```
 
 ## Commands
