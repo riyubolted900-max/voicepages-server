@@ -53,18 +53,26 @@ class FileParser:
             logger.warning("ebooklib not installed, using fallback")
             return await self._parse_txt(file_path)
         
+        import warnings
+        warnings.filterwarnings("ignore")
+
         book = epub.read_epub(file_path)
         chapters = []
-        
+
         for item in book.get_items():
             if item.get_type() == ebooklib.ITEM_DOCUMENT:
                 # Get text content
-                content = item.get_content().decode('utf-8')
-                
+                try:
+                    content = item.get_content().decode('utf-8', errors='ignore')
+                except Exception:
+                    continue
+
                 # Extract text from HTML
                 text = self._extract_text_from_html(content)
-                
-                if text.strip():
+
+                # Skip very short items (front matter, title pages, etc.)
+                # A real chapter typically has at least 500 chars
+                if text.strip() and len(text.strip()) >= 500:
                     chapters.append(text)
         
         # If no chapters found, treat entire content as one chapter
