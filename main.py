@@ -11,7 +11,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import aiosqlite
@@ -433,11 +433,15 @@ async def generate_chapter_audio(
         )
         await db.commit()
         
-        # Return audio
-        return StreamingResponse(
-            io.BytesIO(audio_bytes),
+        # Return audio with Content-Length (needed for Howler.js / HTML5 Audio)
+        return Response(
+            content=audio_bytes,
             media_type="audio/wav",
-            headers={"Content-Disposition": f"inline; filename=chapter_{chapter_id}.wav"}
+            headers={
+                "Content-Disposition": f"inline; filename=chapter_{chapter_id}.wav",
+                "Content-Length": str(len(audio_bytes)),
+                "Accept-Ranges": "bytes"
+            }
         )
         
     except Exception as e:
@@ -469,14 +473,25 @@ async def get_chapter_audio(
     audio_path = Path(row[0])
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found")
-    
+
     with open(audio_path, 'rb') as f:
         audio_bytes = f.read()
-    
-    return StreamingResponse(
-        io.BytesIO(audio_bytes),
+
+    # Clean WAV if it has non-standard chunks (FLLR from afconvert)
+    if audio_bytes[:4] == b'RIFF' and b'FLLR' in audio_bytes[:100]:
+        audio_bytes = audio_generator._clean_wav(audio_bytes)
+        # Overwrite the cached file with the clean version
+        with open(audio_path, 'wb') as f:
+            f.write(audio_bytes)
+
+    return Response(
+        content=audio_bytes,
         media_type="audio/wav",
-        headers={"Content-Disposition": f"inline; filename=chapter_{chapter_id}.wav"}
+        headers={
+            "Content-Disposition": f"inline; filename=chapter_{chapter_id}.wav",
+            "Content-Length": str(len(audio_bytes)),
+            "Accept-Ranges": "bytes"
+        }
     )
 
 
@@ -652,6 +667,22 @@ if WEB_APP_DIR.exists():
     async def serve_sw():
         return FileResponse(str(WEB_APP_DIR / "registerSW.js"))
     
+    # Serve test page
+    @app.get("/test_audio.html")
+    async def serve_test_audio():
+        test_path = WEB_APP_DIR / "test_audio.html"
+        if test_path.exists():
+            return FileResponse(str(test_path))
+        raise HTTPException(status_code=404)
+
+    # Serve favicon
+    @app.get("/favicon.svg")
+    async def serve_favicon():
+        favicon_path = WEB_APP_DIR / "favicon.svg"
+        if favicon_path.exists():
+            return FileResponse(str(favicon_path))
+        raise HTTPException(status_code=404)
+
     # SPA fallback
     @app.get("/{path:path}")
     async def serve_spa_fallback(path: str):

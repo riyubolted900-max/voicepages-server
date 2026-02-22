@@ -128,13 +128,80 @@ class AudioGenerator:
                 check=True, capture_output=True
             )
             with open(tmp_wav, 'rb') as f:
-                return f.read()
+                raw_wav = f.read()
+            # afconvert adds a non-standard FLLR padding chunk that breaks
+            # browser HTML5 Audio decoders. Re-encode as a clean WAV.
+            return self._clean_wav(raw_wav)
         finally:
             for f in [tmp_aiff, tmp_wav]:
                 try:
                     os.unlink(f)
                 except OSError:
                     pass
+
+    def _clean_wav(self, wav_bytes: bytes) -> bytes:
+        """
+        Strip non-standard chunks (FLLR, etc.) from WAV files.
+
+        macOS afconvert produces WAV files with a FLLR (filler) padding chunk
+        between the 'fmt ' and 'data' chunks. Most browser HTML5 Audio decoders
+        don't handle non-standard chunks and fail to load the audio.
+
+        This method parses the WAV, extracts only fmt and data chunks,
+        and writes a clean, browser-compatible WAV file.
+        """
+        if len(wav_bytes) < 44:
+            return wav_bytes
+
+        # Verify RIFF/WAVE header
+        if wav_bytes[:4] != b'RIFF' or wav_bytes[8:12] != b'WAVE':
+            return wav_bytes
+
+        # Parse chunks to find fmt and data
+        fmt_chunk = None
+        data_chunk = None
+        pos = 12  # Skip RIFF header + 'WAVE'
+
+        while pos < len(wav_bytes) - 8:
+            chunk_id = wav_bytes[pos:pos+4]
+            chunk_size = struct.unpack('<I', wav_bytes[pos+4:pos+8])[0]
+            chunk_data = wav_bytes[pos+8:pos+8+chunk_size]
+
+            if chunk_id == b'fmt ':
+                fmt_chunk = chunk_data
+            elif chunk_id == b'data':
+                data_chunk = chunk_data
+            # Skip all other chunks (FLLR, LIST, etc.)
+
+            pos += 8 + chunk_size
+            # Chunks are word-aligned (padded to even size)
+            if chunk_size % 2 == 1:
+                pos += 1
+
+        if fmt_chunk is None or data_chunk is None:
+            logger.warning("Could not parse WAV chunks, returning original")
+            return wav_bytes
+
+        # Build a clean WAV: RIFF header + fmt + data only
+        fmt_size = len(fmt_chunk)
+        data_size = len(data_chunk)
+        # RIFF size = 4 (WAVE) + 8 (fmt header) + fmt_size + 8 (data header) + data_size
+        riff_size = 4 + 8 + fmt_size + 8 + data_size
+
+        clean = io.BytesIO()
+        clean.write(b'RIFF')
+        clean.write(struct.pack('<I', riff_size))
+        clean.write(b'WAVE')
+        clean.write(b'fmt ')
+        clean.write(struct.pack('<I', fmt_size))
+        clean.write(fmt_chunk)
+        clean.write(b'data')
+        clean.write(struct.pack('<I', data_size))
+        clean.write(data_chunk)
+
+        result = clean.getvalue()
+        logger.debug(f"Cleaned WAV: {len(wav_bytes)} -> {len(result)} bytes (removed {len(wav_bytes) - len(result)} bytes of padding)")
+        return result
 
     def _generate_placeholder_audio(self, text: str) -> bytes:
         """Generate placeholder audio when all TTS backends are unavailable."""
