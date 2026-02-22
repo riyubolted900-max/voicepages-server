@@ -211,6 +211,77 @@ async def health_check():
     }
 
 
+@app.get("/api/test")
+async def run_tests():
+    """
+    Run self-diagnostics tests.
+    Tests: health, voices, tts, storage
+    """
+    import tempfile
+    import subprocess
+    
+    results = []
+    all_passed = True
+    
+    # Test 1: Health
+    try:
+        results.append({"test": "health", "status": "pass", "message": "Server responding"})
+    except Exception as e:
+        results.append({"test": "health", "status": "fail", "message": str(e)})
+        all_passed = False
+    
+    # Test 2: Voices available
+    try:
+        voices = voice_assigner.get_available_voices()
+        if len(voices) > 0:
+            results.append({"test": "voices", "status": "pass", "message": f"{len(voices)} voices available"})
+        else:
+            results.append({"test": "voices", "status": "fail", "message": "No voices found"})
+            all_passed = False
+    except Exception as e:
+        results.append({"test": "voices", "status": "fail", "message": str(e)})
+        all_passed = False
+    
+    # Test 3: Storage writable
+    try:
+        test_file = STORAGE_DIR / "test_write.txt"
+        test_file.write_text("test")
+        test_file.unlink()
+        results.append({"test": "storage", "status": "pass", "message": "Storage writable"})
+    except Exception as e:
+        results.append({"test": "storage", "status": "fail", "message": str(e)})
+        all_passed = False
+    
+    # Test 4: TTS available (macOS say)
+    try:
+        result = subprocess.run(['say', '-v', '?'], capture_output=True, timeout=5)
+        if result.returncode == 0:
+            results.append({"test": "tts", "status": "pass", "message": "macOS TTS available"})
+        else:
+            results.append({"test": "tts", "status": "fail", "message": "say command failed"})
+            all_passed = False
+    except Exception as e:
+        results.append({"test": "tts", "status": "fail", "message": str(e)})
+        all_passed = False
+    
+    # Test 5: Simple TTS generation
+    try:
+        test_audio = await audio_generator.generate_simple("Test.", "af_samantha", 1.0)
+        if len(test_audio) > 1000:
+            results.append({"test": "tts_generate", "status": "pass", "message": f"Audio generated ({len(test_audio)} bytes)"})
+        else:
+            results.append({"test": "tts_generate", "status": "fail", "message": "Audio too short"})
+            all_passed = False
+    except Exception as e:
+        results.append({"test": "tts_generate", "status": "fail", "message": str(e)})
+        all_passed = False
+    
+    return {
+        "passed": all_passed,
+        "tests": results
+    }
+
+
 @app.post("/api/books/upload")
 async def upload_book(
     file: UploadFile = File(...),
