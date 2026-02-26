@@ -319,9 +319,10 @@ async def upload_book(
     logger.info(f"Parsing book: {file.filename}")
     chapters = await file_parser.parse_file(str(file_path), file_ext)
     
-    # Extract basic metadata
-    title = file.filename.replace(f".{file_ext}", "")
-    author = "Unknown"
+    # Extract metadata from file parser (if available)
+    metadata = file_parser.get_metadata()
+    title = metadata.get("title") or file.filename.replace(f".{file_ext}", "")
+    author = metadata.get("author") or "Unknown"
     
     # Detect characters (simplified - uses filename as title for now)
     characters = await character_detector.detect(chapters)
@@ -692,9 +693,32 @@ async def delete_book(book_id: str, db: aiosqlite.Connection = Depends(get_db)):
     await db.execute("DELETE FROM books WHERE id = ?", (book_id,))
     await db.commit()
     
-    # Delete audio files
+    # Delete audio files - more robust cleanup
+    # Pattern 1: book_id_*.wav
     for audio_file in AUDIO_DIR.glob(f"{book_id}_*.wav"):
-        audio_file.unlink()
+        try:
+            audio_file.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to delete audio file {audio_file}: {e}")
+    
+    # Pattern 2: Any files containing book_id in name (covers different naming schemes)
+    for audio_file in AUDIO_DIR.glob(f"*{book_id}*.wav"):
+        try:
+            audio_file.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to delete audio file {audio_file}: {e}")
+    
+    # Pattern 3: Check audio_cache table for specific paths and delete
+    cursor = await db.execute("SELECT audio_path FROM audio_cache WHERE book_id = ?", (book_id,))
+    async for row in cursor:
+        audio_path = row[0]
+        if audio_path:
+            path = Path(audio_path)
+            if path.exists():
+                try:
+                    path.unlink()
+                except OSError as e:
+                   logger.warning(f"Failed to delete cached audio {path}: {e}")
     
     # Delete book file
     book_files = BOOKS_DIR.glob(f"{book_id}.*")
