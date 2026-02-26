@@ -52,12 +52,134 @@ class AudioGenerator:
         voice_assignments: List[Dict], use_narrator: bool = True
     ) -> bytes:
         """Generate full chapter audio with character voices."""
+        if not characters or not voice_assignments:
+            # No character data - use single voice
+            narrator_voice = "af_sky"
+            for char_name, char_data in characters.items() if characters else []:
+                if char_data.get("is_narrator"):
+                    narrator_voice = char_data.get("voice_id", "af_sky")
+                    break
+            return await self.generate_simple(text=text, voice_id=narrator_voice, speed=1.0)
+
+        # Build a mapping of character names to their voices
+        char_voice_map = {}
         narrator_voice = "af_sky"
         for char_name, char_data in characters.items():
             if char_data.get("is_narrator"):
                 narrator_voice = char_data.get("voice_id", "af_sky")
-                break
-        return await self.generate_simple(text=text, voice_id=narrator_voice, speed=1.0)
+            else:
+                char_voice_map[char_name] = char_data.get("voice_id", narrator_voice)
+
+        # Build voice assignment map from voice_assignments list
+        # Format: [{"character": "Name", "voice_id": "af_sky"}, ...]
+        for assignment in voice_assignments:
+            char_name = assignment.get("character")
+            voice_id = assignment.get("voice_id")
+            if char_name and voice_id:
+                char_voice_map[char_name] = voice_id
+
+        # Detect dialogue and generate audio per segment
+        segments = await self._detect_dialogue_with_speakers(text, char_voice_map)
+        
+        audio_segments = []
+        for segment in segments:
+            speaker = segment.get("speaker", "Narrator")
+            segment_text = segment.get("text", "")
+            if not segment_text.strip():
+                continue
+            
+            voice_id = char_voice_map.get(speaker, narrator_voice)
+            try:
+                audio = await self.generate_simple(text=segment_text, voice_id=voice_id, speed=1.0)
+                audio_segments.append(audio)
+            except Exception as e:
+                logger.warning(f"Failed to generate audio for {speaker}: {e}")
+                # Fallback to narrator voice
+                audio = await self.generate_simple(text=segment_text, voice_id=narrator_voice, speed=1.0)
+                audio_segments.append(audio)
+
+        if not audio_segments:
+            return await self.generate_simple(text=text, voice_id=narrator_voice, speed=1.0)
+
+        return await self.concatenate_audio(audio_segments)
+
+    async def _detect_dialogue_with_speakers(self, text: str, char_voice_map: Dict) -> List[Dict]:
+        """Detect dialogue segments with speaker attribution."""
+        import re
+        segments = []
+        
+        # Pattern to find dialogue with speaker attribution
+        # Matches: "dialogue" Name said / "dialogue," Name replied
+        dialogue_pattern = r'["""\'"]([^""\'"]+)["""\'"]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:said|replied|asked|whispered|shouted|called|murmured|yelled|answered|sighed|breathed|hissed|growled|declared|demanded|insisted|suggested|continued|added|agreed|warned|pleaded|begged|barked|ordered|screamed|announced|laughed|smiled|grinned|chuckled|groaned|stammered|stuttered|sobbed|wailed|roared|sneered|scoffed|retorted|interrupted|protested|conceded|acknowledged|remarked|observed|noted|commented|explained|offered|urged|prompted|wondered|mused|pondered|repeated|finished|began|started|managed|attempted|tried|stated|spoke)'
+        
+        # Pattern for Name said, "dialogue"
+        reverse_pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:said|replied|asked|whispered|shouted|called|murmured|yelled|answered|sighed|breathed|hissed|growled|declared|demanded|insisted|suggested|continued|added|agreed|warned|pleaded|begged|barked|ordered|screamed|announced|laughed|smiled|grinned|chuckled|groaned|stammered|stuttered|sobbed|wailed|roared|sneered|scoffed|retorted|interrupted|protested|conceded|acknowledged|remarked|observed|noted|commented|explained|offered|urged|prompted|wondered|mused|pondered|repeated|finished|began|started|managed|attempted|tried|stated|spoke)\s*[,.:]\s*["""\'"]([^""\'"]+)["""\']'
+        
+        # Find all matches and their positions
+        all_matches = []
+        
+        for m in re.finditer(dialogue_pattern, text):
+            all_matches.append({
+                "start": m.start(),
+                "end": m.end(),
+                "speaker": m.group(2).strip(),
+                "dialogue": m.group(1).strip(),
+                "type": "dialogue"
+            })
+        
+        for m in re.finditer(reverse_pattern, text):
+            all_matches.append({
+                "start": m.start(),
+                "end": m.end(),
+                "speaker": m.group(1).strip(),
+                "dialogue": m.group(2).strip(),
+                "type": "dialogue"
+            })
+        
+        # Sort by position
+        all_matches.sort(key=lambda x: x["start"])
+        
+        # Build segments
+        last_end = 0
+        for match in all_matches:
+            # Add narration before this dialogue
+            if match["start"] > last_end:
+                narration = text[last_end:match["start"]].strip()
+                if narration:
+                    segments.append({
+                        "speaker": "Narrator",
+                        "text": narration,
+                        "type": "narration"
+                    })
+            
+            # Add dialogue
+            if match["speaker"] in char_voice_map or match["speaker"] == "Narrator":
+                segments.append({
+                    "speaker": match["speaker"],
+                    "text": match["dialogue"],
+                    "type": "dialogue"
+                })
+            else:
+                # Unknown speaker - treat as narrator
+                segments.append({
+                    "speaker": "Narrator",
+                    "text": match["dialogue"],
+                    "type": "dialogue"
+                })
+            
+            last_end = match["end"]
+        
+        # Add remaining narration
+        if last_end < len(text):
+            remaining = text[last_end:].strip()
+            if remaining:
+                segments.append({
+                    "speaker": "Narrator",
+                    "text": remaining,
+                    "type": "narration"
+                })
+        
+        return segments if segments else [{"speaker": "Narrator", "text": text, "type": "narration"}]
 
     async def generate_simple(
         self, text: str, voice_id: str = "af_sky", speed: float = 1.0

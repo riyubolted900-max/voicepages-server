@@ -57,6 +57,23 @@ class FileParser:
         warnings.filterwarnings("ignore")
 
         book = epub.read_epub(file_path)
+        
+        # Extract metadata (title and author)
+        title = None
+        author = None
+        
+        # Try to get title from metadata
+        if book.get_metadata('DC', 'title'):
+            title = book.get_metadata('DC', 'title')[0][0]
+        
+        # Try to get author from metadata
+        if book.get_metadata('DC', 'creator'):
+            author = book.get_metadata('DC', 'creator')[0][0]
+        
+        # Store in instance for retrieval
+        self._extracted_title = title
+        self._extracted_author = author
+        
         chapters = []
 
         for item in book.get_items():
@@ -153,6 +170,13 @@ class FileParser:
         text = ' '.join(chunk for chunk in chunks if chunk)
         
         return text
+    
+    def get_metadata(self) -> dict:
+        """Return extracted metadata from last parsed file."""
+        return {
+            "title": getattr(self, '_extracted_title', None),
+            "author": getattr(self, '_extracted_author', None)
+        }
     
     def _split_into_chunks(self, content: str, chunk_size: int = 5000) -> List[str]:
         """
