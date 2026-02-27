@@ -91,7 +91,7 @@ class VoiceAssigner:
 
         for char_name, char_data in sorted_chars:
             if char_name.lower() == "narrator" or char_data.get("role") == "system":
-                assignments["Narrator"] = {
+                assignments["narrator"] = {
                     "voice_id": self.narrator_voice,
                     "voice_name": "Sky",
                     "reasoning": "Default narrator voice (calm, neutral)"

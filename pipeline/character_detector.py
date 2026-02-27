@@ -99,7 +99,7 @@ Text to analyze:
 JSON:"""
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.post(
                     f"{self.ollama_url}/api/generate",
                     json={
@@ -119,7 +119,7 @@ JSON:"""
                         characters = data.get("characters", {})
 
                         # Always add narrator
-                        characters["Narrator"] = {
+                        characters["narrator"] = {
                             "gender": "unknown",
                             "role": "system",
                             "description": "Story narration"
@@ -254,7 +254,7 @@ JSON:"""
                 }
 
         # Always add narrator
-        characters["Narrator"] = {
+        characters["narrator"] = {
             "gender": "unknown",
             "role": "system",
             "description": "Story narration"

@@ -28,7 +28,7 @@ AUDIO_SAMPLE_RATE = int(os.environ.get("AUDIO_SAMPLE_RATE", "24000"))
 AUDIO_SPEED = float(os.environ.get("AUDIO_SPEED", "1.0"))
 
 # CORS - allow all for local development
-CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
+CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",")]
 
 # Book processing
 MAX_CHUNK_SIZE = int(os.environ.get("MAX_CHUNK_SIZE", "5000"))  # characters per TTS chunk

@@ -60,10 +60,13 @@ class KokoroGenerator:
         """Generate TTS audio."""
         kokoro_voice = self.get_kokoro_voice(voice_id)
         
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, mode='w') as tmp:
+        with tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w', encoding='utf-8') as tmp:
             tmp.write(text)
             tmp_path = tmp.name
-            out_path = tmp_path.replace('.wav', '_output.wav')
+
+        # Output wav gets a fresh temp path
+        out_fd, out_path = tempfile.mkstemp(suffix='.wav')
+        os.close(out_fd)
         
         try:
             cmd = [
