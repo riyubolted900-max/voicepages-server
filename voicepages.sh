@@ -1,6 +1,6 @@
 #!/bin/bash
-# VoicePages - AI Multi-Voice Audiobook Server
-# Usage: ./voicepages.sh {install|start|stop|restart|status|uninstall|logs}
+# VoicePages Startup Script
+# AI Multi-Voice Audiobook Server with Kokoro TTS
 
 set -euo pipefail
 
@@ -9,6 +9,10 @@ VENV_DIR="$SCRIPT_DIR/venv"
 PID_FILE="$SCRIPT_DIR/.voicepages.pid"
 LOG_FILE="$SCRIPT_DIR/voicepages.log"
 PORT="${PORT:-9000}"
+
+# Kokoro model files
+KOKORO_MODEL_URL="https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx"
+KOKORO_VOICES_URL="https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin"
 
 # Colors
 GREEN='\033[0;32m'
@@ -31,28 +35,87 @@ is_running() {
         fi
         rm -f "$PID_FILE"
     fi
-    # Also check by process name
-    pgrep -f "uvicorn main:app.*--port $PORT" > /dev/null 2>&1
+    return 1
 }
 
 get_pid() {
     if [ -f "$PID_FILE" ]; then
         cat "$PID_FILE"
-    else
-        pgrep -f "uvicorn main:app.*--port $PORT" 2>/dev/null | head -1
     fi
+}
+
+check_kokoro() {
+    local model_path="$SCRIPT_DIR/storage/kokoro-v1.0.onnx"
+    local voices_path="$SCRIPT_DIR/storage/voices-v1.0.bin"
+    
+    if [ -f "$model_path" ] && [ -f "$voices_path" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+download_kokoro() {
+    echo ""
+    echo -e "${BOLD}Downloading Kokoro TTS models...${NC}"
+    
+    mkdir -p "$SCRIPT_DIR/storage"
+    
+    local model_path="$SCRIPT_DIR/storage/kokoro-v1.0.onnx"
+    local voices_path="$SCRIPT_DIR/storage/voices-v1.0.bin"
+    
+    if [ ! -f "$model_path" ]; then
+        echo -n "  Downloading kokoro-v1.0.onnx (325MB)... "
+        if curl -L -o "$model_path" "$KOKORO_MODEL_URL" 2>/dev/null; then
+            echo -e "${GREEN}OK${NC}"
+        else
+            echo -e "${RED}FAILED${NC}"
+            return 1
+        fi
+    else
+        echo -e "  kokoro-v1.0.onnx: ${GREEN}already exists${NC}"
+    fi
+    
+    if [ ! -f "$voices_path" ]; then
+        echo -n "  Downloading voices-v1.0.bin (26MB)... "
+        if curl -L -o "$voices_path" "$KOKORO_VOICES_URL" 2>/dev/null; then
+            echo -e "${GREEN}OK${NC}"
+        else
+            echo -e "${RED}FAILED${NC}"
+            return 1
+        fi
+    else
+        echo -e "  voices-v1.0.bin: ${GREEN}already exists${NC}"
+    fi
+    
+    echo -e "${GREEN}Kokoro models ready!${NC}"
 }
 
 install() {
     echo -e "${BOLD}VoicePages Install${NC}"
     echo ""
+    echo -e "Using Kokoro TTS for high-quality voice synthesis"
+    echo ""
 
-    # Check Python 3
+    # Check Python 3.10+ (required for Kokoro)
     if ! command -v python3 &> /dev/null; then
-        echo -e "${RED}Error: python3 not found. Install Python 3.10+ first.${NC}"
+        echo -e "${RED}Error: python3 not found.${NC}"
+        echo "  Install Python 3.10+: https://www.python.org/downloads/"
+        echo "  Or: brew install python@3.11"
         exit 1
     fi
+    
     PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    PYMAJOR=$(python3 -c "import sys; print(sys.version_info.major)")
+    PYMINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
+    
+    if [ "$PYMAJOR" -lt 3 ] || { [ "$PYMAJOR" -eq 3 ] && [ "$PYMINOR" -lt 10 ]; }; then
+        echo -e "${RED}Error: Python 3.10+ required for Kokoro TTS${NC}"
+        echo "  Current: $PYVER"
+        echo "  Install: brew install python@3.11"
+        exit 1
+    fi
+    
     echo -e "  Python: ${GREEN}$PYVER${NC}"
 
     # Create venv
@@ -64,39 +127,34 @@ install() {
 
     # Install Python deps
     echo "  Installing Python dependencies..."
-    pip install -q --upgrade pip 2>/dev/null
+    pip install -q --upgrade pip 2>/dev/null || true
     pip install -q -r "$SCRIPT_DIR/requirements.txt" 2>&1 | tail -1
 
     # Create storage directories
     mkdir -p "$SCRIPT_DIR/storage/books"
     mkdir -p "$SCRIPT_DIR/storage/audio"
 
-    # Create .env if missing
-    if [ ! -f "$SCRIPT_DIR/.env" ]; then
-        if [ -f "$SCRIPT_DIR/.env.example" ]; then
-            cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
-            echo -e "  Created ${CYAN}.env${NC} from example (uses macOS Speech by default)"
-        fi
-    fi
+    # Download Kokoro models
+    download_kokoro
 
     # Check for web build
     if [ -d "$SCRIPT_DIR/web" ] && [ -f "$SCRIPT_DIR/web/index.html" ]; then
         echo -e "  Web app: ${GREEN}built${NC}"
     else
-        echo -e "  Web app: ${YELLOW}not built${NC} (build voicepages-web and copy dist/ to web/)"
+        echo -e "  Web app: ${YELLOW}not built${NC}"
     fi
 
-    # Check optional services
-    echo ""
-    echo -e "${BOLD}Optional services:${NC}"
-    if curl -s http://localhost:11434/api/version > /dev/null 2>&1; then
-        echo -e "  Ollama:    ${GREEN}running${NC} (character detection enabled)"
+    # Check Ollama
+    if command -v ollama &> /dev/null && pgrep -x ollama > /dev/null; then
+        echo -e "  Ollama:    ${GREEN}running${NC}"
     else
-        echo -e "  Ollama:    ${YELLOW}not running${NC} (install: brew install ollama && ollama pull llama3.2:3b)"
+        echo -e "  Ollama:    ${YELLOW}not running${NC} (optional: brew install ollama)"
     fi
 
     echo ""
-    echo -e "${GREEN}Install complete!${NC} Run: ${BOLD}./voicepages.sh start${NC}"
+    echo -e "${GREEN}Install complete!${NC}"
+    echo ""
+    echo "To start: ${BOLD}./voicepages.sh start${NC}"
 }
 
 start() {
@@ -104,9 +162,9 @@ start() {
         local pid
         pid=$(get_pid)
         echo -e "${YELLOW}VoicePages is already running${NC} (PID $pid)"
-        echo -e "  http://$(get_ip):$PORT"
-        return 0
-    fi
+        echo "  http://$(get_ip):$ 0
+   PORT"
+        return fi
 
     echo -e "Starting VoicePages..."
 
@@ -116,9 +174,14 @@ start() {
         install
     fi
 
+    # Download Kokoro if missing
+    if ! check_kokoro; then
+        download_kokoro
+    fi
+
     source "$VENV_DIR/bin/activate"
 
-    # Start server in background
+    # Start server
     cd "$SCRIPT_DIR"
     nohup python3 -m uvicorn main:app --host 0.0.0.0 --port "$PORT" > "$LOG_FILE" 2>&1 &
     local pid=$!
@@ -128,111 +191,76 @@ start() {
     echo -n "  Waiting for server"
     for i in {1..15}; do
         if curl -s "http://localhost:$PORT/api/health" > /dev/null 2>&1; then
-            echo ""
-            local ip
-            ip=$(get_ip)
-            echo ""
-            echo -e "${GREEN}VoicePages is running!${NC}"
-            echo ""
-            echo -e "  Local:   http://localhost:$PORT"
-            echo -e "  Phone:   ${BOLD}http://$ip:$PORT${NC}"
-            echo ""
-            echo -e "  Stop:    ./voicepages.sh stop"
-            echo -e "  Logs:    ./voicepages.sh logs"
-            return 0
+            break
         fi
         echo -n "."
         sleep 1
     done
 
     echo ""
-    echo -e "${YELLOW}Server started (PID $pid) but health check timed out.${NC}"
-    echo "  Check logs: ./voicepages.sh logs"
+    local ip
+    ip=$(get_ip)
+    echo ""
+    echo -e "${GREEN}VoicePages is running!${NC}"
+    echo ""
+    echo "  Local:   http://localhost:$PORT"
+    echo "  Network: http://$ip:$PORT"
+    echo ""
+    echo "Kokoro TTS: $(check_kokoro && echo "${GREEN}Ready${NC}" || echo "${YELLOW}Not found${NC}")"
 }
 
 stop() {
-    if ! is_running; then
-        echo "VoicePages is not running."
-        return 0
-    fi
-
-    local pid
-    pid=$(get_pid)
-    echo -n "Stopping VoicePages (PID $pid)..."
-    kill "$pid" 2>/dev/null || true
-
-    # Wait for clean shutdown
-    for i in {1..10}; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-            rm -f "$PID_FILE"
-            echo -e " ${GREEN}stopped${NC}"
-            return 0
-        fi
-        sleep 0.5
-    done
-
-    # Force kill
-    kill -9 "$pid" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    echo -e " ${GREEN}stopped (forced)${NC}"
-}
-
-status() {
-    local ip
-    ip=$(get_ip)
-
     if is_running; then
         local pid
         pid=$(get_pid)
-        echo -e "${GREEN}VoicePages is RUNNING${NC} (PID $pid)"
-        echo ""
-        echo -e "  Local:   http://localhost:$PORT"
-        echo -e "  Phone:   ${BOLD}http://$ip:$PORT${NC}"
-
-        # Show uptime info from health endpoint
-        local health
-        health=$(curl -s "http://localhost:$PORT/api/health" 2>/dev/null || echo "{}")
-        echo ""
-        echo -e "  Health:  $health"
+        echo "Stopping VoicePages (PID $pid)..."
+        kill "$pid" 2>/dev/null || true
+        rm -f "$PID_FILE"
+        echo -e "${GREEN}Stopped${NC}"
     else
-        echo -e "${RED}VoicePages is NOT running${NC}"
-        echo ""
-        echo -e "  Start:   ./voicepages.sh start"
+        echo "VoicePages is not running"
+    fi
+}
+
+status() {
+    if is_running; then
+        local pid
+        pid=$(get_pid)
+        echo -e "${GREEN}VoicePages is running${NC} (PID $pid)"
+        echo "  http://$(get_ip):$PORT"
+        echo "Kokoro: $(check_kokoro && echo "${GREEN}Ready${NC}" || echo "${YELLOW}Not found${NC}")"
+    else
+        echo -e "${YELLOW}VoicePages is not running${NC}"
+        echo "Run: ./voicepages.sh start"
     fi
 }
 
 logs() {
     if [ -f "$LOG_FILE" ]; then
-        tail -50 "$LOG_FILE"
-        echo ""
-        echo -e "${CYAN}(showing last 50 lines — full log: $LOG_FILE)${NC}"
+        tail -30 "$LOG_FILE"
     else
-        echo "No log file found. Start the server first."
+        echo "No logs found"
     fi
 }
 
 do_uninstall() {
     echo -e "${BOLD}Uninstalling VoicePages...${NC}"
 
-    # Stop if running
     if is_running; then
         stop
     fi
 
-    # Remove venv
     if [ -d "$VENV_DIR" ]; then
         rm -rf "$VENV_DIR"
         echo "  Removed virtual environment"
     fi
 
-    # Remove generated files
     rm -f "$PID_FILE" "$LOG_FILE"
     rm -rf "$SCRIPT_DIR/storage"
     rm -rf "$SCRIPT_DIR/__pycache__" "$SCRIPT_DIR"/*/__pycache__
 
     echo ""
-    echo -e "${GREEN}Uninstalled.${NC} The source code is still in: $SCRIPT_DIR"
-    echo "  To fully remove: rm -rf \"$SCRIPT_DIR\""
+    echo -e "${GREEN}Uninstalled.${NC} Source code still in: $SCRIPT_DIR"
 }
 
 case "${1:-help}" in
@@ -243,7 +271,7 @@ case "${1:-help}" in
     status)    status ;;
     logs)      logs ;;
     uninstall)
-        echo -e "${YELLOW}This will remove the venv, storage, and cached data.${NC}"
+        echo -e "${YELLOW}This will remove venv, storage, and cached data.${NC}"
         echo -n "Continue? (y/n) "
         read -r reply
         if [[ "$reply" =~ ^[Yy] ]]; then
@@ -258,15 +286,15 @@ case "${1:-help}" in
         echo "Usage: $0 <command>"
         echo ""
         echo "Commands:"
-        echo "  install    Install dependencies and set up environment"
-        echo "  start      Start the server (runs in background)"
+        echo "  install    Install dependencies + download Kokoro models"
+        echo "  start      Start the server"
         echo "  stop       Stop the server"
         echo "  restart    Stop then start"
-        echo "  status     Check if running and show URLs"
-        echo "  logs       Show recent server logs"
-        echo "  uninstall  Remove venv, storage, and cached data"
+        echo "  status     Check if running"
+        echo "  logs       Show server logs"
+        echo "  uninstall  Remove venv and data"
         echo ""
-        echo "One-liner install & start:"
+        echo "One-liner:"
         echo "  ./voicepages.sh install && ./voicepages.sh start"
         ;;
 esac
