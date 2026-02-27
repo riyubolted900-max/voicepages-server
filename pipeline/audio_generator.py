@@ -1,6 +1,6 @@
 """
 Audio Generator - Generate TTS audio from text
-Supports macOS Speech (built-in), Kokoro, and fallback options.
+Supports Kokoro (local), macOS Speech (built-in), and fallback options.
 """
 
 import io
@@ -15,6 +15,7 @@ import httpx
 import numpy as np
 
 from config import settings
+from pipeline.kokoro_generator import KokoroGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +25,11 @@ class AudioGenerator:
     Generate TTS audio using configured backend.
 
     Priority:
-    1. Kokoro via MLX-Audio (if running)
+    1. Kokoro (local CLI) - highest quality
     2. macOS Speech (built-in, always available on Mac)
-    3. Placeholder (for testing only)
     """
 
+    # Map voice IDs to macOS voices
     MAC_VOICE_MAP = {
         "af_sky": "Samantha", "af_heart": "Victoria", "af_bella": "Zoey",
         "af_nova": "Samantha", "af_sarah": "Allison", "af_nicole": "Samantha",
@@ -44,7 +45,14 @@ class AudioGenerator:
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.backend = settings.tts_backend
-        self.kokoro_url = settings.kokoro_url
+        
+        # Initialize Kokoro generator
+        self.kokoro = KokoroGenerator(
+            model_path=os.path.join(settings.storage_dir, "kokoro-v1.0.onnx"),
+            voices_path=os.path.join(settings.storage_dir, "voices-v1.0.bin"),
+            python_path="/opt/homebrew/bin/python3.11"
+        )
+        
         self.sample_rate = settings.audio_sample_rate
 
     async def generate(
@@ -71,7 +79,6 @@ class AudioGenerator:
                 char_voice_map[char_name] = char_data.get("voice_id", narrator_voice)
 
         # Build voice assignment map from voice_assignments list
-        # Format: [{"character": "Name", "voice_id": "af_sky"}, ...]
         for assignment in voice_assignments:
             char_name = assignment.get("character")
             voice_id = assignment.get("voice_id")
@@ -109,13 +116,11 @@ class AudioGenerator:
         segments = []
         
         # Pattern to find dialogue with speaker attribution
-        # Matches: "dialogue" Name said / "dialogue," Name replied
         dialogue_pattern = r'["""\'"]([^""\'"]+)["""\'"]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:said|replied|asked|whispered|shouted|called|murmured|yelled|answered|sighed|breathed|hissed|growled|declared|demanded|insisted|suggested|continued|added|agreed|warned|pleaded|begged|barked|ordered|screamed|announced|laughed|smiled|grinned|chuckled|groaned|stammered|stuttered|sobbed|wailed|roared|sneered|scoffed|retorted|interrupted|protested|conceded|acknowledged|remarked|observed|noted|commented|explained|offered|urged|prompted|wondered|mused|pondered|repeated|finished|began|started|managed|attempted|tried|stated|spoke)'
         
         # Pattern for Name said, "dialogue"
         reverse_pattern = r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:said|replied|asked|whispered|shouted|called|murmured|yelled|answered|sighed|breathed|hissed|growled|declared|demanded|insisted|suggested|continued|added|agreed|warned|pleaded|begged|barked|ordered|screamed|announced|laughed|smiled|grinned|chuckled|groaned|stammered|stuttered|sobbed|wailed|roared|sneered|scoffed|retorted|interrupted|protested|conceded|acknowledged|remarked|observed|noted|commented|explained|offered|urged|prompted|wondered|mused|pondered|repeated|finished|began|started|managed|attempted|tried|stated|spoke)\s*[,.:]\s*["""\'"]([^""\'"]+)["""\']'
         
-        # Find all matches and their positions
         all_matches = []
         
         for m in re.finditer(dialogue_pattern, text):
@@ -136,13 +141,10 @@ class AudioGenerator:
                 "type": "dialogue"
             })
         
-        # Sort by position
         all_matches.sort(key=lambda x: x["start"])
         
-        # Build segments
         last_end = 0
         for match in all_matches:
-            # Add narration before this dialogue
             if match["start"] > last_end:
                 narration = text[last_end:match["start"]].strip()
                 if narration:
@@ -152,7 +154,6 @@ class AudioGenerator:
                         "type": "narration"
                     })
             
-            # Add dialogue
             if match["speaker"] in char_voice_map or match["speaker"] == "Narrator":
                 segments.append({
                     "speaker": match["speaker"],
@@ -160,7 +161,6 @@ class AudioGenerator:
                     "type": "dialogue"
                 })
             else:
-                # Unknown speaker - treat as narrator
                 segments.append({
                     "speaker": "Narrator",
                     "text": match["dialogue"],
@@ -169,7 +169,6 @@ class AudioGenerator:
             
             last_end = match["end"]
         
-        # Add remaining narration
         if last_end < len(text):
             remaining = text[last_end:].strip()
             if remaining:
@@ -194,9 +193,9 @@ class AudioGenerator:
             raise ValueError("Empty text after cleaning")
 
         # Try Kokoro first
-        if self.backend == "kokoro":
+        if self.backend == "kokoro" and self.kokoro.is_available():
             try:
-                return await self._generate_kokoro(text, voice_id, speed)
+                return await self.kokoro.generate(text, voice_id, speed)
             except Exception as e:
                 logger.warning(f"Kokoro failed, falling back to macOS Speech: {e}")
 
@@ -209,24 +208,6 @@ class AudioGenerator:
         # Last resort
         logger.warning("All TTS backends failed, using placeholder audio")
         return self._generate_placeholder_audio(text)
-
-    async def _generate_kokoro(self, text: str, voice_id: str, speed: float) -> bytes:
-        """Generate audio using Kokoro TTS via MLX-Audio HTTP API."""
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{self.kokoro_url}/v1/audio/speech",
-                json={
-                    "model": "kokoro",
-                    "input": text,
-                    "voice": voice_id,
-                    "speed": speed,
-                    "response_format": "wav"
-                }
-            )
-            if response.status_code == 200:
-                return response.content
-            else:
-                raise Exception(f"Kokoro API error: {response.status_code}")
 
     async def _generate_mac_speech(self, text: str, voice_id: str, speed: float) -> bytes:
         """Generate audio using macOS built-in Speech."""
@@ -251,8 +232,6 @@ class AudioGenerator:
             )
             with open(tmp_wav, 'rb') as f:
                 raw_wav = f.read()
-            # afconvert adds a non-standard FLLR padding chunk that breaks
-            # browser HTML5 Audio decoders. Re-encode as a clean WAV.
             return self._clean_wav(raw_wav)
         finally:
             for f in [tmp_aiff, tmp_wav]:
@@ -262,27 +241,16 @@ class AudioGenerator:
                     pass
 
     def _clean_wav(self, wav_bytes: bytes) -> bytes:
-        """
-        Strip non-standard chunks (FLLR, etc.) from WAV files.
-
-        macOS afconvert produces WAV files with a FLLR (filler) padding chunk
-        between the 'fmt ' and 'data' chunks. Most browser HTML5 Audio decoders
-        don't handle non-standard chunks and fail to load the audio.
-
-        This method parses the WAV, extracts only fmt and data chunks,
-        and writes a clean, browser-compatible WAV file.
-        """
+        """Strip non-standard chunks from WAV files."""
         if len(wav_bytes) < 44:
             return wav_bytes
 
-        # Verify RIFF/WAVE header
         if wav_bytes[:4] != b'RIFF' or wav_bytes[8:12] != b'WAVE':
             return wav_bytes
 
-        # Parse chunks to find fmt and data
         fmt_chunk = None
         data_chunk = None
-        pos = 12  # Skip RIFF header + 'WAVE'
+        pos = 12
 
         while pos < len(wav_bytes) - 8:
             chunk_id = wav_bytes[pos:pos+4]
@@ -293,10 +261,8 @@ class AudioGenerator:
                 fmt_chunk = chunk_data
             elif chunk_id == b'data':
                 data_chunk = chunk_data
-            # Skip all other chunks (FLLR, LIST, etc.)
 
             pos += 8 + chunk_size
-            # Chunks are word-aligned (padded to even size)
             if chunk_size % 2 == 1:
                 pos += 1
 
@@ -304,10 +270,8 @@ class AudioGenerator:
             logger.warning("Could not parse WAV chunks, returning original")
             return wav_bytes
 
-        # Build a clean WAV: RIFF header + fmt + data only
         fmt_size = len(fmt_chunk)
         data_size = len(data_chunk)
-        # RIFF size = 4 (WAVE) + 8 (fmt header) + fmt_size + 8 (data header) + data_size
         riff_size = 4 + 8 + fmt_size + 8 + data_size
 
         clean = io.BytesIO()
@@ -321,9 +285,7 @@ class AudioGenerator:
         clean.write(struct.pack('<I', data_size))
         clean.write(data_chunk)
 
-        result = clean.getvalue()
-        logger.debug(f"Cleaned WAV: {len(wav_bytes)} -> {len(result)} bytes (removed {len(wav_bytes) - len(result)} bytes of padding)")
-        return result
+        return clean.getvalue()
 
     def _generate_placeholder_audio(self, text: str) -> bytes:
         """Generate placeholder audio when all TTS backends are unavailable."""
@@ -331,7 +293,7 @@ class AudioGenerator:
         sample_rate = self.sample_rate
         num_samples = int(duration * sample_rate)
         if num_samples == 0:
-            num_samples = sample_rate  # 1 second minimum
+            num_samples = sample_rate
 
         t = np.linspace(0, duration, num_samples)
         samples = np.sin(2 * np.pi * 200 * t) * 0.3

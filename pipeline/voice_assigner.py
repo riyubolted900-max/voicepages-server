@@ -15,31 +15,40 @@ logger = logging.getLogger(__name__)
 
 # Unified voice list that works with both Kokoro and macOS Speech
 AVAILABLE_VOICES = [
-    # Female American
-    {"id": "af_sky", "name": "Sky", "gender": "female", "accent": "american", "style": "calm"},
-    {"id": "af_heart", "name": "Heart", "gender": "female", "accent": "american", "style": "warm"},
-    {"id": "af_bella", "name": "Bella", "gender": "female", "accent": "american", "style": "bright"},
-    {"id": "af_nova", "name": "Nova", "gender": "female", "accent": "american", "style": "confident"},
-    {"id": "af_sarah", "name": "Sarah", "gender": "female", "accent": "american", "style": "friendly"},
-    {"id": "af_nicole", "name": "Nicole", "gender": "female", "accent": "american", "style": "smooth"},
+    # American Female (Kokoro)
+    {"id": "af_sky", "name": "Sky", "gender": "female", "accent": "american", "style": "calm", "engine": "kokoro"},
+    {"id": "af_heart", "name": "Heart", "gender": "female", "accent": "american", "style": "warm", "engine": "kokoro"},
+    {"id": "af_bella", "name": "Bella", "gender": "female", "accent": "american", "style": "bright", "engine": "kokoro"},
+    {"id": "af_nova", "name": "Nova", "gender": "female", "accent": "american", "style": "confident", "engine": "kokoro"},
+    {"id": "af_sarah", "name": "Sarah", "gender": "female", "accent": "american", "style": "friendly", "engine": "kokoro"},
+    {"id": "af_nicole", "name": "Nicole", "gender": "female", "accent": "american", "style": "smooth", "engine": "kokoro"},
+    {"id": "af_alloy", "name": "Alloy", "gender": "female", "accent": "american", "style": "neutral", "engine": "kokoro"},
+    {"id": "af_aoede", "name": "Aoede", "gender": "female", "accent": "american", "style": "melodic", "engine": "kokoro"},
+    {"id": "af_jessica", "name": "Jessica", "gender": "female", "accent": "american", "style": "professional", "engine": "kokoro"},
+    {"id": "af_kore", "name": "Kore", "gender": "female", "accent": "american", "style": "youthful", "engine": "kokoro"},
+    {"id": "af_river", "name": "River", "gender": "female", "accent": "american", "style": "casual", "engine": "kokoro"},
 
-    # Male American
-    {"id": "am_adam", "name": "Adam", "gender": "male", "accent": "american", "style": "deep"},
-    {"id": "am_echo", "name": "Echo", "gender": "male", "accent": "american", "style": "energetic"},
-    {"id": "am_michael", "name": "Michael", "gender": "male", "accent": "american", "style": "steady"},
-    {"id": "am_liam", "name": "Liam", "gender": "male", "accent": "american", "style": "casual"},
+    # American Male (Kokoro)
+    {"id": "am_adam", "name": "Adam", "gender": "male", "accent": "american", "style": "deep", "engine": "kokoro"},
+    {"id": "am_echo", "name": "Echo", "gender": "male", "accent": "american", "style": "energetic", "engine": "kokoro"},
+    {"id": "am_michael", "name": "Michael", "gender": "male", "accent": "american", "style": "steady", "engine": "kokoro"},
+    {"id": "am_liam", "name": "Liam", "gender": "male", "accent": "american", "style": "casual", "engine": "kokoro"},
+    {"id": "am_onyx", "name": "Onyx", "gender": "male", "accent": "american", "style": "deep", "engine": "kokoro"},
+    {"id": "am_puck", "name": "Puck", "gender": "male", "accent": "american", "style": "playful", "engine": "kokoro"},
+    {"id": "am_eric", "name": "Eric", "gender": "male", "accent": "american", "style": "authoritative", "engine": "kokoro"},
+    {"id": "am_fenrir", "name": "Fenrir", "gender": "male", "accent": "american", "style": "strong", "engine": "kokoro"},
 
-    # Female British
-    {"id": "bf_alice", "name": "Alice", "gender": "female", "accent": "british", "style": "gentle"},
-    {"id": "bf_emma", "name": "Emma", "gender": "female", "accent": "british", "style": "authoritative"},
-    {"id": "bf_lily", "name": "Lily", "gender": "female", "accent": "british", "style": "sweet"},
-    {"id": "bf_isabella", "name": "Isabella", "gender": "female", "accent": "british", "style": "elegant"},
+    # British Female (Kokoro)
+    {"id": "bf_alice", "name": "Alice", "gender": "female", "accent": "british", "style": "gentle", "engine": "kokoro"},
+    {"id": "bf_emma", "name": "Emma", "gender": "female", "accent": "british", "style": "authoritative", "engine": "kokoro"},
+    {"id": "bf_lily", "name": "Lily", "gender": "female", "accent": "british", "style": "sweet", "engine": "kokoro"},
+    {"id": "bf_isabella", "name": "Isabella", "gender": "female", "accent": "british", "style": "elegant", "engine": "kokoro"},
 
-    # Male British
-    {"id": "bm_daniel", "name": "Daniel", "gender": "male", "accent": "british", "style": "warm"},
-    {"id": "bm_george", "name": "George", "gender": "male", "accent": "british", "style": "distinguished"},
-    {"id": "bm_lewis", "name": "Lewis", "gender": "male", "accent": "british", "style": "clear"},
-    {"id": "bm_fable", "name": "Fable", "gender": "male", "accent": "british", "style": "animated"},
+    # British Male (Kokoro)
+    {"id": "bm_daniel", "name": "Daniel", "gender": "male", "accent": "british", "style": "warm", "engine": "kokoro"},
+    {"id": "bm_george", "name": "George", "gender": "male", "accent": "british", "style": "distinguished", "engine": "kokoro"},
+    {"id": "bm_lewis", "name": "Lewis", "gender": "male", "accent": "british", "style": "clear", "engine": "kokoro"},
+    {"id": "bm_fable", "name": "Fable", "gender": "male", "accent": "british", "style": "animated", "engine": "kokoro"},
 ]
 
 VOICE_BY_ID = {v["id"]: v for v in AVAILABLE_VOICES}
