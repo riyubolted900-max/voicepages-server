@@ -6,6 +6,7 @@ Run: uvicorn main:app --host 0.0.0.0 --port 9000 --reload
 """
 
 import os
+import hmac
 import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import aiosqlite
 import logging
 
@@ -48,30 +50,41 @@ audio_generator = AudioGenerator(AUDIO_DIR)
 
 
 # ============================================================================
+# Pydantic Request Models
+# ============================================================================
+
+class BookmarkBody(BaseModel):
+    chapter_id: int = 1
+    position: float = 0.0
+
+class VoiceUpdateBody(BaseModel):
+    voice_id: str
+
+
+# ============================================================================
 # Authentication Dependency
 # ============================================================================
 
-async def verify_api_key(x_api_key: str = None):
+# Maximum allowed upload size: 100 MB
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+async def verify_api_key(x_api_key: str = Header(None)):
     """
     Verify API key if password is configured.
+    Uses constant-time comparison to prevent timing attacks.
     Add header: X-API-Key: your_password
     """
     if not settings.api_password:
         return True  # No password configured, allow all
-    
+
     if not x_api_key:
         raise HTTPException(status_code=401, detail="X-API-Key header required")
-    
-    if x_api_key != settings.api_password:
+
+    # Constant-time comparison prevents timing-based enumeration
+    if not hmac.compare_digest(x_api_key, settings.api_password):
         raise HTTPException(status_code=403, detail="Invalid API key")
-    
+
     return True
-
-
-# Quick alias for Depends
-def require_auth(x_api_key: str = Header(None)):
-    """Use this in endpoints that need authentication."""
-    return verify_api_key(x_api_key)
 
 
 @asynccontextmanager
@@ -163,10 +176,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configure CORS for local network access
+# Configure CORS — set CORS_ORIGINS env var to restrict to specific hosts in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -206,8 +219,8 @@ async def health_check():
     """Detailed health check."""
     return {
         "status": "healthy",
-        "storage": str(STORAGE_DIR),
-        "audio_dir": str(AUDIO_DIR)
+        "storage_ok": STORAGE_DIR.exists(),
+        "audio_ok": AUDIO_DIR.exists(),
     }
 
 
@@ -249,7 +262,8 @@ async def run_tests():
         test_file.unlink()
         results.append({"test": "storage", "status": "pass", "message": "Storage writable"})
     except Exception as e:
-        results.append({"test": "storage", "status": "fail", "message": str(e)})
+        # Avoid leaking internal paths in error messages
+        results.append({"test": "storage", "status": "fail", "message": "Storage not writable"})
         all_passed = False
     
     # Test 4: TTS available (macOS say)
@@ -285,33 +299,34 @@ async def run_tests():
 @app.post("/api/books/upload")
 async def upload_book(
     file: UploadFile = File(...),
-    x_api_key: str = Header(None),
-    db: aiosqlite.Connection = Depends(get_db)
+    db: aiosqlite.Connection = Depends(get_db),
+    _auth = Depends(verify_api_key),
 ):
     """
     Upload and process a book file.
-    
+
     Supported formats: epub, pdf, txt, doc, docx
     Requires auth if password is configured.
-    
+
     Returns: book_id, title, author, chapter_count
     """
-    await verify_api_key(x_api_key)
     import uuid
     import aiofiles
-    
+
     # Generate unique book ID
     book_id = str(uuid.uuid4())[:8]
-    
-    # Save uploaded file
+
+    # Validate file extension
     file_ext = file.filename.split('.')[-1].lower()
     if file_ext not in ['epub', 'pdf', 'txt', 'doc', 'docx']:
         raise HTTPException(status_code=400, detail="Unsupported file type")
-    
+
     file_path = BOOKS_DIR / f"{book_id}.{file_ext}"
-    
-    # Write file to disk
+
+    # Read file and enforce size limit
     content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 100 MB)")
     async with aiofiles.open(file_path, 'wb') as f:
         await f.write(content)
     
@@ -449,7 +464,8 @@ async def get_chapter(
 async def generate_chapter_audio(
     book_id: str,
     chapter_id: int,
-    db: aiosqlite.Connection = Depends(get_db)
+    db: aiosqlite.Connection = Depends(get_db),
+    _auth = Depends(verify_api_key),
 ):
     """
     Generate audio for a chapter.
@@ -592,13 +608,12 @@ async def get_characters(book_id: str, db: aiosqlite.Connection = Depends(get_db
 async def update_character_voice(
     book_id: str,
     char_name: str,
-    body: dict,
-    db: aiosqlite.Connection = Depends(get_db)
+    body: VoiceUpdateBody,
+    db: aiosqlite.Connection = Depends(get_db),
+    _auth = Depends(verify_api_key),
 ):
     """Update a character's assigned voice."""
-    voice_id = body.get("voice_id")
-    if not voice_id:
-        raise HTTPException(status_code=400, detail="voice_id required in body")
+    voice_id = body.voice_id
 
     # Validate voice_id exists
     valid_ids = {v["id"] for v in voice_assigner.get_available_voices()}
@@ -617,12 +632,13 @@ async def update_character_voice(
 @app.post("/api/books/{book_id}/bookmark")
 async def save_bookmark(
     book_id: str,
-    body: dict,
-    db: aiosqlite.Connection = Depends(get_db)
+    body: BookmarkBody,
+    db: aiosqlite.Connection = Depends(get_db),
+    _auth = Depends(verify_api_key),
 ):
     """Save reading position bookmark."""
-    chapter_id = body.get("chapter_id", 1)
-    position = body.get("position", 0.0)
+    chapter_id = body.chapter_id
+    position = body.position
 
     await db.execute("DELETE FROM bookmarks WHERE book_id = ?", (book_id,))
     await db.execute(
@@ -684,7 +700,11 @@ async def generate_tts(
 
 
 @app.delete("/api/books/{book_id}")
-async def delete_book(book_id: str, db: aiosqlite.Connection = Depends(get_db)):
+async def delete_book(
+    book_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+    _auth = Depends(verify_api_key),
+):
     """Delete a book and all associated data."""
     await db.execute("DELETE FROM audio_cache WHERE book_id = ?", (book_id,))
     await db.execute("DELETE FROM bookmarks WHERE book_id = ?", (book_id,))
