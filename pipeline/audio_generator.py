@@ -167,37 +167,6 @@ class AudioGenerator:
 
         return await self.kokoro.generate(text, voice_id, speed)
 
-    def _generate_placeholder_audio(self, text: str) -> bytes:
-        """Generate placeholder audio when Kokoro is unavailable."""
-        duration = min(len(text) * 0.05, 30)
-        sample_rate = self.sample_rate
-        num_samples = int(duration * sample_rate)
-        if num_samples == 0:
-            num_samples = sample_rate
-
-        t = np.linspace(0, duration, num_samples)
-        samples = np.sin(2 * np.pi * 200 * t) * 0.3
-        fade = int(0.1 * sample_rate)
-        if fade > 0 and num_samples > 2 * fade:
-            samples[:fade] *= np.linspace(0, 1, fade)
-            samples[-fade:] *= np.linspace(1, 0, fade)
-        samples_int = (samples * 32767).astype(np.int16)
-
-        wav = io.BytesIO()
-        wav.write(b'RIFF')
-        wav.write(struct.pack('<I', 36 + num_samples * 2))
-        wav.write(b'WAVE')
-        wav.write(b'fmt ')
-        wav.write(struct.pack('<I', 16))
-        wav.write(struct.pack('<HH', 1, 1))
-        wav.write(struct.pack('<I', sample_rate))
-        wav.write(struct.pack('<I', sample_rate * 2))
-        wav.write(struct.pack('<HH', 2, 16))
-        wav.write(b'data')
-        wav.write(struct.pack('<I', num_samples * 2))
-        wav.write(samples_int.tobytes())
-        return wav.getvalue()
-
     async def concatenate_audio(self, audio_segments: List[bytes], pause_ms: int = 300) -> bytes:
         """Concatenate multiple audio segments with pauses between them."""
         if not audio_segments:
@@ -205,16 +174,35 @@ class AudioGenerator:
         if len(audio_segments) == 1:
             return audio_segments[0]
 
-        header = audio_segments[0][:44]
-        sample_rate = struct.unpack('<I', header[24:28])[0]
+        def parse_wav_header(data: bytes):
+            """Parse WAV header, return (sample_rate, channels, bits_per_sample, data_offset)."""
+            if data[:4] != b'RIFF' or data[8:12] != b'WAVE':
+                raise ValueError("Not a valid WAV file")
+            channels = struct.unpack_from('<H', data, 22)[0]
+            sample_rate = struct.unpack_from('<I', data, 24)[0]
+            bits_per_sample = struct.unpack_from('<H', data, 34)[0]
+            # Find data chunk (scan past fmt chunk)
+            offset = 12
+            while offset + 8 <= len(data):
+                chunk_id = data[offset:offset+4]
+                chunk_size = struct.unpack_from('<I', data, offset+4)[0]
+                if chunk_id == b'data':
+                    return sample_rate, channels, bits_per_sample, offset + 8
+                offset += 8 + chunk_size
+            # Fallback: standard 44-byte header
+            return sample_rate, channels, bits_per_sample, 44
+
+        sample_rate, channels, bits_per_sample, data_offset = parse_wav_header(audio_segments[0])
+        dtype = {16: np.int16, 32: np.float32, 8: np.uint8}.get(bits_per_sample, np.int16)
 
         pause_samples = int(sample_rate * pause_ms / 1000)
-        pause = np.zeros(pause_samples, dtype=np.int16)
+        pause = np.zeros(pause_samples * channels, dtype=dtype)
 
         arrays = []
         for i, segment in enumerate(audio_segments):
-            if len(segment) > 44:
-                arrays.append(np.frombuffer(segment[44:], dtype=np.int16))
+            _, _, _, seg_data_offset = parse_wav_header(segment)
+            if len(segment) > seg_data_offset:
+                arrays.append(np.frombuffer(segment[seg_data_offset:], dtype=dtype))
                 if i < len(audio_segments) - 1:
                     arrays.append(pause)
 
@@ -222,19 +210,24 @@ class AudioGenerator:
             return audio_segments[0]
 
         combined = np.concatenate(arrays)
-        num_samples = len(combined)
+        num_frames = len(combined) // channels
+        num_bytes = len(combined) * combined.itemsize
+
+        block_align = channels * (bits_per_sample // 8)
+        byte_rate = sample_rate * block_align
+        audio_format = 3 if dtype == np.float32 else 1  # PCM=1, IEEE_FLOAT=3
 
         wav = io.BytesIO()
         wav.write(b'RIFF')
-        wav.write(struct.pack('<I', 36 + num_samples * 2))
+        wav.write(struct.pack('<I', 36 + num_bytes))
         wav.write(b'WAVE')
         wav.write(b'fmt ')
         wav.write(struct.pack('<I', 16))
-        wav.write(struct.pack('<HH', 1, 1))
+        wav.write(struct.pack('<HH', audio_format, channels))
         wav.write(struct.pack('<I', sample_rate))
-        wav.write(struct.pack('<I', sample_rate * 2))
-        wav.write(struct.pack('<HH', 2, 16))
+        wav.write(struct.pack('<I', byte_rate))
+        wav.write(struct.pack('<HH', block_align, bits_per_sample))
         wav.write(b'data')
-        wav.write(struct.pack('<I', num_samples * 2))
+        wav.write(struct.pack('<I', num_bytes))
         wav.write(combined.tobytes())
         return wav.getvalue()
