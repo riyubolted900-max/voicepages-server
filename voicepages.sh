@@ -162,9 +162,9 @@ start() {
         local pid
         pid=$(get_pid)
         echo -e "${YELLOW}VoicePages is already running${NC} (PID $pid)"
-        echo "  http://$(get_ip):$ 0
-   PORT"
-        return fi
+        echo "  Network: http://$(get_ip):$PORT"
+        return 0
+    fi
 
     echo -e "Starting VoicePages..."
 
