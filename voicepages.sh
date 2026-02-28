@@ -55,39 +55,50 @@ check_kokoro() {
     fi
 }
 
+download_file() {
+    local url="$1" dest="$2" label="$3" min_bytes="$4"
+    local tmp="${dest}.tmp"
+
+    echo "  Downloading $label..."
+    if ! curl -L --progress-bar -o "$tmp" "$url"; then
+        rm -f "$tmp"
+        echo -e "  ${RED}Download failed: $label${NC}"
+        return 1
+    fi
+
+    local size
+    size=$(wc -c < "$tmp" 2>/dev/null || echo 0)
+    if [ "$size" -lt "$min_bytes" ]; then
+        rm -f "$tmp"
+        echo -e "  ${RED}Download incomplete ($size bytes): $label${NC}"
+        return 1
+    fi
+
+    mv "$tmp" "$dest"
+    echo -e "  ${GREEN}$label — done${NC}"
+}
+
 download_kokoro() {
     echo ""
-    echo -e "${BOLD}Downloading Kokoro TTS models...${NC}"
-    
+    echo -e "${BOLD}Kokoro TTS model files${NC}"
+
     mkdir -p "$SCRIPT_DIR/storage"
-    
+
     local model_path="$SCRIPT_DIR/storage/kokoro-v1.0.onnx"
     local voices_path="$SCRIPT_DIR/storage/voices-v1.0.bin"
-    
-    if [ ! -f "$model_path" ]; then
-        echo -n "  Downloading kokoro-v1.0.onnx (325MB)... "
-        if curl -L -o "$model_path" "$KOKORO_MODEL_URL" 2>/dev/null; then
-            echo -e "${GREEN}OK${NC}"
-        else
-            echo -e "${RED}FAILED${NC}"
-            return 1
-        fi
+
+    if [ -f "$model_path" ]; then
+        echo -e "  kokoro-v1.0.onnx: ${GREEN}already present${NC}"
     else
-        echo -e "  kokoro-v1.0.onnx: ${GREEN}already exists${NC}"
+        download_file "$KOKORO_MODEL_URL" "$model_path" "kokoro-v1.0.onnx (325 MB)" 100000000 || return 1
     fi
-    
-    if [ ! -f "$voices_path" ]; then
-        echo -n "  Downloading voices-v1.0.bin (26MB)... "
-        if curl -L -o "$voices_path" "$KOKORO_VOICES_URL" 2>/dev/null; then
-            echo -e "${GREEN}OK${NC}"
-        else
-            echo -e "${RED}FAILED${NC}"
-            return 1
-        fi
+
+    if [ -f "$voices_path" ]; then
+        echo -e "  voices-v1.0.bin:   ${GREEN}already present${NC}"
     else
-        echo -e "  voices-v1.0.bin: ${GREEN}already exists${NC}"
+        download_file "$KOKORO_VOICES_URL" "$voices_path" "voices-v1.0.bin (26 MB)" 1000000 || return 1
     fi
-    
+
     echo -e "${GREEN}Kokoro models ready!${NC}"
 }
 
