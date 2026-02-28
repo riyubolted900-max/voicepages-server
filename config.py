@@ -21,7 +21,7 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 
 # Ollama (LLM) Configuration
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.2:3b")
+LLM_MODEL = os.environ.get("LLM_MODEL", "minimax-m2.5:cloud")
 
 # Audio settings
 AUDIO_SAMPLE_RATE = int(os.environ.get("AUDIO_SAMPLE_RATE", "24000"))
