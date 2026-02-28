@@ -1,6 +1,6 @@
 """
 Voice Assigner - Assign TTS voices to characters
-Works with both Kokoro and macOS Speech voices.
+Works with Kokoro TTS only.
 """
 
 import json
@@ -9,11 +9,12 @@ from typing import Dict, List
 import httpx
 
 from config import settings
+from pipeline.minimax_client import minimax_client
 
 logger = logging.getLogger(__name__)
 
 
-# Unified voice list that works with both Kokoro and macOS Speech
+# Unified voice list for Kokoro
 AVAILABLE_VOICES = [
     # American Female (Kokoro)
     {"id": "af_sky", "name": "Sky", "gender": "female", "accent": "american", "style": "calm", "engine": "kokoro"},
@@ -48,37 +49,28 @@ AVAILABLE_VOICES = [
     {"id": "bm_daniel", "name": "Daniel", "gender": "male", "accent": "british", "style": "warm", "engine": "kokoro"},
     {"id": "bm_george", "name": "George", "gender": "male", "accent": "british", "style": "distinguished", "engine": "kokoro"},
     {"id": "bm_lewis", "name": "Lewis", "gender": "male", "accent": "british", "style": "clear", "engine": "kokoro"},
-    {"id": "bm_fable", "name": "Fable", "gender": "male", "accent": "british", "style": "animated", "engine": "kokoro"},
 ]
 
 VOICE_BY_ID = {v["id"]: v for v in AVAILABLE_VOICES}
 
 
 class VoiceAssigner:
-    """Assign TTS voices to characters based on their properties."""
+    """
+    Assign TTS voices to characters using Minimax API.
+    """
 
     def __init__(self):
-        self.available_voices = AVAILABLE_VOICES
-        self.ollama_url = settings.ollama_url
-        self.llm_model = settings.llm_model
-
-        self.voices_by_gender = {
-            "male": [v for v in self.available_voices if v["gender"] == "male"],
-            "female": [v for v in self.available_voices if v["gender"] == "female"],
-        }
-
         self.narrator_voice = "af_sky"
-
-    def get_available_voices(self) -> List[Dict]:
-        return self.available_voices
+        self.available_voices = AVAILABLE_VOICES
+        
+        # Build voice lookup by gender
+        self.voices_by_gender = {"female": [], "male": []}
+        for v in AVAILABLE_VOICES:
+            if v["gender"] in self.voices_by_gender:
+                self.voices_by_gender[v["gender"]].append(v)
 
     async def assign_voices(self, characters: Dict) -> Dict:
-        """
-        Assign voices to detected characters.
-
-        Returns:
-            Dict of character_name -> {voice_id, voice_name, reasoning}
-        """
+        """Assign voices to detected characters."""
         assignments = {}
         used_voices = set()
 
@@ -103,30 +95,69 @@ class VoiceAssigner:
 
             if gender in ("male", "female"):
                 candidates = self.voices_by_gender.get(gender, [])
+                # Filter out used voices
+                available = [v for v in candidates if v["id"] not in used_voices]
+                if available:
+                    voice = available[0]
+                    used_voices.add(voice["id"])
+                    assignments[char_name] = {
+                        "voice_id": voice["id"],
+                        "voice_name": voice["name"],
+                        "reasoning": f"{gender} voice for {char_data.get('role', 'supporting')} character"
+                    }
+                elif candidates:
+                    voice = candidates[0]
+                    assignments[char_name] = {
+                        "voice_id": voice["id"],
+                        "voice_name": voice["name"],
+                        "reasoning": f"Default {gender} voice"
+                    }
             else:
-                candidates = self.available_voices
+                # Unknown gender - use narrator voice
+                assignments[char_name] = {
+                    "voice_id": self.narrator_voice,
+                    "voice_name": "Sky",
+                    "reasoning": "Default voice for unknown gender"
+                }
 
-            available = [v for v in candidates if v["id"] not in used_voices]
-            if not available:
-                available = candidates
-
-            if available:
-                voice = available[0]
-                used_voices.add(voice["id"])
-            else:
-                voice = {"id": self.narrator_voice, "name": "Sky", "style": "calm"}
-
-            assignments[char_name] = {
-                "voice_id": voice["id"],
-                "voice_name": voice.get("name", voice["id"]),
-                "reasoning": f"Assigned {voice.get('style', 'default')} voice for {gender} character"
-            }
-
-        logger.info(f"Assigned voices to {len(assignments)} characters")
         return assignments
 
     async def assign_voice_with_llm(self, character_name: str, character_description: str) -> Dict:
-        """Use LLM to intelligently assign a voice."""
+        """Use Minimax API to intelligently assign a voice."""
+        voices_json = json.dumps(self.available_voices[:10])
+
+        prompt = f"""You are a voice casting director. Select the best voice for this character:
+
+{voices_json}
+
+Character: {character_name}
+Description: {character_description}
+
+Return ONLY JSON: {{"voice_id": "id", "reasoning": "why"}}
+JSON:"""
+
+        # Try Minimax first, fallback to Ollama
+        model = getattr(settings, 'minimax_model', 'MiniMax-Text-01')
+        result = await minimax_client.generate(prompt, model=model)
+        
+        if result:
+            try:
+                data = json.loads(result)
+                voice_id = data.get("voice_id", self.narrator_voice)
+                if voice_id not in VOICE_BY_ID:
+                    voice_id = self.narrator_voice
+                return {
+                    "voice_id": voice_id,
+                    "reasoning": data.get("reasoning", "Minimax assigned")
+                }
+            except json.JSONDecodeError:
+                pass
+        
+        # Fallback to Ollama if Minimax fails
+        return await self._assign_voice_with_ollama(character_name, character_description)
+    
+    async def _assign_voice_with_ollama(self, character_name: str, character_description: str) -> Dict:
+        """Fallback to Ollama for voice assignment."""
         voices_json = json.dumps(self.available_voices[:10])
 
         prompt = f"""You are a voice casting director. Select the best voice for this character:
@@ -142,9 +173,9 @@ JSON:"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{self.ollama_url}/api/generate",
+                    f"{settings.ollama_url}/api/generate",
                     json={
-                        "model": self.llm_model,
+                        "model": settings.llm_model,
                         "prompt": prompt,
                         "stream": False,
                         "format": "json"
@@ -160,9 +191,9 @@ JSON:"""
                         voice_id = self.narrator_voice
                     return {
                         "voice_id": voice_id,
-                        "reasoning": data.get("reasoning", "Default assignment")
+                        "reasoning": data.get("reasoning", "Ollama fallback")
                     }
         except Exception as e:
-            logger.warning(f"LLM voice assignment failed: {e}")
+            logger.warning(f"Ollama fallback failed: {e}")
 
         return {"voice_id": self.narrator_voice, "reasoning": "Default fallback"}

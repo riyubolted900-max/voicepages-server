@@ -11,6 +11,7 @@ from typing import Dict, List
 import httpx
 
 from config import settings
+from pipeline.minimax_client import minimax_client
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,54 @@ class CharacterDetector:
         return characters
 
     async def _detect_with_llm(self, sample_text: str) -> Dict:
-        """Use Ollama LLM to detect characters."""
+        """Use Minimax API to detect characters (falls back to Ollama)."""
+        prompt = f"""Analyze the following text from a book and identify all characters (people) who speak or are mentioned.
+
+For each character, determine:
+- Name (how they're referred to in the book)
+- Gender (male/female/unknown)
+- Role (main character, supporting, minor)
+
+Return ONLY a JSON object with this structure (no other text):
+{{
+  "characters": {{
+    "Character Name": {{
+      "gender": "male/female/unknown",
+      "role": "main/supporting/minor",
+      "description": "brief description"
+    }}
+  }}
+}}
+
+Text to analyze:
+{sample_text}
+
+JSON:"""
+
+        # Try Minimax first
+        model = getattr(settings, 'minimax_model', 'MiniMax-Text-01')
+        result = await minimax_client.generate(prompt, model=model)
+        
+        if result:
+            try:
+                data = json.loads(result)
+                characters = data.get("characters", {})
+                if characters:
+                    characters["Narrator"] = {
+                        "gender": "unknown",
+                        "role": "system",
+                        "description": "Story narration"
+                    }
+                    logger.info(f"Minimax detected {len(characters)} characters")
+                    return characters
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse Minimax response JSON")
+        
+        # Fallback to Ollama
+        return await self._detect_with_ollama(sample_text)
+    
+    async def _detect_with_ollama(self, sample_text: str) -> Dict:
+        """Use Ollama LLM to detect characters (fallback)."""
         prompt = f"""Analyze the following text from a book and identify all characters (people) who speak or are mentioned.
 
 For each character, determine:
@@ -125,16 +173,16 @@ JSON:"""
                             "description": "Story narration"
                         }
 
-                        logger.info(f"LLM detected {len(characters)} characters")
+                        logger.info(f"Ollama detected {len(characters)} characters")
                         return characters
                     except json.JSONDecodeError:
-                        logger.warning("Failed to parse LLM response JSON")
+                        logger.warning("Failed to parse Ollama response JSON")
                         return {}
 
         except httpx.ConnectError:
             logger.warning(f"Cannot connect to Ollama at {self.ollama_url}")
         except Exception as e:
-            logger.warning(f"LLM character detection failed: {e}")
+            logger.warning(f"Ollama character detection failed: {e}")
 
         return {}
 

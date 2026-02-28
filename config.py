@@ -53,3 +53,12 @@ class Settings:
     api_password = API_PASSWORD
 
 settings = Settings()
+
+
+# Minimax API Configuration (direct, not through Ollama)
+MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
+MINIMAX_MODEL = os.environ.get("MINIMAX_MODEL", "MiniMax-Text-01")
+
+# Add to Settings class
+settings.minimax_api_key = MINIMAX_API_KEY
+settings.minimax_model = MINIMAX_MODEL
