@@ -266,13 +266,19 @@ async def run_tests():
         results.append({"test": "storage", "status": "fail", "message": "Storage not writable"})
         all_passed = False
     
-    # Test 4: TTS available (macOS say)
+    # Test 4: Kokoro model files present
     try:
-        result = subprocess.run(['say', '-v', '?'], capture_output=True, timeout=5)
-        if result.returncode == 0:
-            results.append({"test": "tts", "status": "pass", "message": "macOS TTS available"})
+        model_path = STORAGE_DIR / "kokoro-v1.0.onnx"
+        voices_path = STORAGE_DIR / "voices-v1.0.bin"
+        if model_path.exists() and voices_path.exists():
+            results.append({"test": "tts", "status": "pass", "message": "Kokoro model files found"})
         else:
-            results.append({"test": "tts", "status": "fail", "message": "say command failed"})
+            missing = []
+            if not model_path.exists():
+                missing.append("kokoro-v1.0.onnx")
+            if not voices_path.exists():
+                missing.append("voices-v1.0.bin")
+            results.append({"test": "tts", "status": "fail", "message": f"Missing Kokoro files: {', '.join(missing)}"})
             all_passed = False
     except Exception as e:
         results.append({"test": "tts", "status": "fail", "message": str(e)})
