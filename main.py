@@ -91,9 +91,27 @@ async def verify_api_key(x_api_key: str = Header(None)):
 async def lifespan(app: FastAPI):
     """Initialize database on startup."""
     await init_db()
+    _check_kokoro_files()
     logger.info("VoicePages Server started")
     yield
     logger.info("VoicePages Server shutting down")
+
+
+def _check_kokoro_files():
+    """Warn at startup if required Kokoro model files are missing."""
+    model_path = STORAGE_DIR / "kokoro-v1.0.onnx"
+    voices_path = STORAGE_DIR / "voices-v1.0.bin"
+    missing = [f.name for f in (model_path, voices_path) if not f.exists()]
+    if missing:
+        logger.warning("=" * 60)
+        logger.warning("KOKORO MODEL FILES MISSING — audio generation will fail")
+        for name in missing:
+            logger.warning("  Missing: storage/%s", name)
+        logger.warning("Download from: https://github.com/thewh1teagle/kokoro-onnx/releases")
+        logger.warning("Place both files in the storage/ folder and restart.")
+        logger.warning("=" * 60)
+    else:
+        logger.info("Kokoro model files found — TTS ready")
 
 
 async def init_db():
