@@ -7,8 +7,9 @@ import io
 import logging
 import os
 import struct
+import wave
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import numpy as np
 
 from config import settings
@@ -167,42 +168,67 @@ class AudioGenerator:
 
         return await self.kokoro.generate(text, voice_id, speed)
 
+    @staticmethod
+    def _validate_and_load_wav(wav_bytes: bytes) -> Tuple[np.ndarray, int, int]:
+        """Load WAV bytes, validate format, return (samples_array, sample_rate, n_channels).
+
+        If the WAV has more than one channel, the channels are averaged down to
+        mono so that all segments can be concatenated consistently.
+        """
+        with wave.open(io.BytesIO(wav_bytes)) as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            framerate = wf.getframerate()
+            raw_frames = wf.readframes(wf.getnframes())
+
+        if sampwidth == 1:
+            dtype = np.uint8
+        elif sampwidth == 2:
+            dtype = np.int16
+        elif sampwidth == 4:
+            dtype = np.int32
+        else:
+            raise ValueError(f"Unsupported sample width: {sampwidth} bytes")
+
+        samples = np.frombuffer(raw_frames, dtype=dtype)
+        if n_channels > 1:
+            samples = samples.reshape(-1, n_channels).mean(axis=1).astype(dtype)
+        return samples, framerate, n_channels
+
     async def concatenate_audio(self, audio_segments: List[bytes], pause_ms: int = 300) -> bytes:
-        """Concatenate multiple audio segments with pauses between them."""
+        """Concatenate multiple audio segments with pauses between them.
+
+        Each segment is parsed via _validate_and_load_wav so that stereo (or
+        higher-channel) WAV data is mixed down to mono before concatenation.
+        """
         if not audio_segments:
             return b''
         if len(audio_segments) == 1:
             return audio_segments[0]
 
-        def parse_wav_header(data: bytes):
-            """Parse WAV header, return (sample_rate, channels, bits_per_sample, data_offset)."""
-            if data[:4] != b'RIFF' or data[8:12] != b'WAVE':
-                raise ValueError("Not a valid WAV file")
-            channels = struct.unpack_from('<H', data, 22)[0]
-            sample_rate = struct.unpack_from('<I', data, 24)[0]
-            bits_per_sample = struct.unpack_from('<H', data, 34)[0]
-            # Find data chunk (scan past fmt chunk)
-            offset = 12
-            while offset + 8 <= len(data):
-                chunk_id = data[offset:offset+4]
-                chunk_size = struct.unpack_from('<I', data, offset+4)[0]
-                if chunk_id == b'data':
-                    return sample_rate, channels, bits_per_sample, offset + 8
-                offset += 8 + chunk_size
-            # Fallback: standard 44-byte header
-            return sample_rate, channels, bits_per_sample, 44
+        # Determine output format from the first segment.
+        first_samples, sample_rate, _ = self._validate_and_load_wav(audio_segments[0])
+        dtype = first_samples.dtype
 
-        sample_rate, channels, bits_per_sample, data_offset = parse_wav_header(audio_segments[0])
-        dtype = {16: np.int16, 32: np.float32, 8: np.uint8}.get(bits_per_sample, np.int16)
+        # Detect original bits-per-sample for WAV header construction.
+        bits_per_sample = dtype.itemsize * 8
+        # After mono downmix there is always exactly 1 channel in the output.
+        out_channels = 1
 
         pause_samples = int(sample_rate * pause_ms / 1000)
-        pause = np.zeros(pause_samples * channels, dtype=dtype)
+        pause = np.zeros(pause_samples, dtype=dtype)
 
         arrays = []
         for i, segment in enumerate(audio_segments):
-            _, _, _, seg_data_offset = parse_wav_header(segment)
-            if len(segment) > seg_data_offset:
-                arrays.append(np.frombuffer(segment[seg_data_offset:], dtype=dtype))
+            samples, seg_sr, _ = self._validate_and_load_wav(segment)
+            if seg_sr != sample_rate:
+                logger.warning(
+                    "Audio segment %d has sample rate %d; expected %d — skipping",
+                    i, seg_sr, sample_rate,
+                )
+                continue
+            if len(samples):
+                arrays.append(samples)
                 if i < len(audio_segments) - 1:
                     arrays.append(pause)
 
@@ -210,10 +236,9 @@ class AudioGenerator:
             return audio_segments[0]
 
         combined = np.concatenate(arrays)
-        num_frames = len(combined) // channels
         num_bytes = len(combined) * combined.itemsize
 
-        block_align = channels * (bits_per_sample // 8)
+        block_align = out_channels * (bits_per_sample // 8)
         byte_rate = sample_rate * block_align
         audio_format = 3 if dtype == np.float32 else 1  # PCM=1, IEEE_FLOAT=3
 
@@ -223,7 +248,7 @@ class AudioGenerator:
         wav.write(b'WAVE')
         wav.write(b'fmt ')
         wav.write(struct.pack('<I', 16))
-        wav.write(struct.pack('<HH', audio_format, channels))
+        wav.write(struct.pack('<HH', audio_format, out_channels))
         wav.write(struct.pack('<I', sample_rate))
         wav.write(struct.pack('<I', byte_rate))
         wav.write(struct.pack('<HH', block_align, bits_per_sample))
