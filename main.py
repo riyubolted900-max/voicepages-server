@@ -511,7 +511,11 @@ async def generate_chapter_audio(
         audio_bytes = await audio_generator.generate(
             text=chapter_text,
             characters=characters,
-            voice_assignments=voice_assigner.get_available_voices()
+            voice_assignments=[
+                {"character": name, "voice_id": data["voice_id"]}
+                for name, data in characters.items()
+                if data.get("voice_id")
+            ]
         )
         
         # Cache the audio

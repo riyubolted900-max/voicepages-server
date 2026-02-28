@@ -28,16 +28,23 @@ class KokoroGenerator:
         "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
     ]
     
-    # Map our voice IDs to Kokoro voices
+    # Map our voice IDs to Kokoro voices (identity for all supported voices)
     VOICE_MAP = {
-        "af_sky": "af_sarah", "af_heart": "af_bella", "af_bella": "af_bella",
-        "af_nova": "af_nova", "af_sarah": "af_sarah", "af_nicole": "af_nova",
+        # American Female
+        "af_sky": "af_sky", "af_heart": "af_heart", "af_bella": "af_bella",
+        "af_nova": "af_nova", "af_sarah": "af_sarah", "af_nicole": "af_nicole",
+        "af_alloy": "af_alloy", "af_aoede": "af_aoede", "af_jessica": "af_jessica",
+        "af_kore": "af_kore", "af_river": "af_river",
+        # American Male
         "am_adam": "am_adam", "am_echo": "am_echo", "am_michael": "am_michael",
-        "am_liam": "am_liam",
-        "bm_daniel": "bm_daniel", "bm_george": "bm_george", 
+        "am_liam": "am_liam", "am_onyx": "am_onyx", "am_puck": "am_puck",
+        "am_eric": "am_eric", "am_fenrir": "am_fenrir",
+        # British Female
+        "bf_alice": "bf_alice", "bf_emma": "bf_emma",
+        "bf_lily": "bf_lily", "bf_isabella": "bf_isabella",
+        # British Male
+        "bm_daniel": "bm_daniel", "bm_george": "bm_george",
         "bm_lewis": "bm_lewis", "bm_fable": "bm_fable",
-        "bf_alice": "bf_alice", "bf_emma": "bf_emma", 
-        "bf_lily": "bf_lily", "bf_isabella": "bf_emma",
     }
     
     def __init__(self, model_path: str = "./kokoro-v1.0.onnx", 
