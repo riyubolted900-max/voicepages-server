@@ -319,12 +319,27 @@ async def upload_book(
     logger.info(f"Parsing book: {file.filename}")
     chapters = await file_parser.parse_file(str(file_path), file_ext)
     
-    # Extract metadata from file parser (if available)
-    metadata = file_parser.get_metadata()
-    title = metadata.get("title") or file.filename.replace(f".{file_ext}", "")
-    author = metadata.get("author") or "Unknown"
-    
-    # Detect characters (simplified - uses filename as title for now)
+<    # Extract metadata from file
+    title = file.filename.replace(f".{file_ext}", "").replace("-", " ").replace("_", " ").strip()
+    author = "Unknown"
+
+    if file_ext == "epub":
+        try:
+            import ebooklib
+            from ebooklib import epub
+            import warnings
+            warnings.filterwarnings("ignore")
+            epub_book = epub.read_epub(str(file_path))
+            title_meta = epub_book.get_metadata("DC", "title")
+            if title_meta:
+                title = title_meta[0][0].strip()
+            creator_meta = epub_book.get_metadata("DC", "creator")
+            if creator_meta:
+                author = creator_meta[0][0].strip()
+        except Exception as e:
+            logger.warning(f"Could not extract EPUB metadata: {e}")
+
+    # Detect characters
     characters = await character_detector.detect(chapters)
     
     # Assign voices to characters
