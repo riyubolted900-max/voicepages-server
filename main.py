@@ -652,6 +652,20 @@ async def update_character_voice(
         "UPDATE characters SET voice_id = ? WHERE book_id = ? AND name = ?",
         (voice_id, book_id, char_name)
     )
+
+    # Invalidate cached audio so next playback regenerates with the new voice
+    cache_cursor = await db.execute(
+        "SELECT audio_path FROM audio_cache WHERE book_id = ?", (book_id,)
+    )
+    async for row in cache_cursor:
+        audio_path = Path(row[0])
+        if audio_path.exists():
+            try:
+                audio_path.unlink()
+            except OSError:
+                pass
+    await db.execute("DELETE FROM audio_cache WHERE book_id = ?", (book_id,))
+
     await db.commit()
 
     return {"status": "updated", "character": char_name, "voice_id": voice_id}
