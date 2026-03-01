@@ -108,31 +108,32 @@ install() {
     echo -e "Using Kokoro TTS for high-quality voice synthesis"
     echo ""
 
-    # Check Python 3.10+ (required for Kokoro)
-    if ! command -v python3 &> /dev/null; then
-        echo -e "${RED}Error: python3 not found.${NC}"
-        echo "  Install Python 3.10+: https://www.python.org/downloads/"
-        echo "  Or: brew install python@3.11"
+    # Find Python 3.10+
+    PYTHON3=""
+    for cmd in python3.13 python3.12 python3.11 python3.10 python3; do
+        if command -v "$cmd" &>/dev/null; then
+            local major minor
+            major=$("$cmd" -c "import sys; print(sys.version_info.major)")
+            minor=$("$cmd" -c "import sys; print(sys.version_info.minor)")
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
+                PYTHON3="$cmd"
+                break
+            fi
+        fi
+    done
+
+    if [ -z "$PYTHON3" ]; then
+        echo -e "${RED}Error: Python 3.10+ not found.${NC}"
+        echo "  Install: brew install python@3.11  OR  sudo apt install python3.11"
         exit 1
     fi
-    
-    PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    PYMAJOR=$(python3 -c "import sys; print(sys.version_info.major)")
-    PYMINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
-    
-    if [ "$PYMAJOR" -lt 3 ] || { [ "$PYMAJOR" -eq 3 ] && [ "$PYMINOR" -lt 10 ]; }; then
-        echo -e "${RED}Error: Python 3.10+ required for Kokoro TTS${NC}"
-        echo "  Current: $PYVER"
-        echo "  Install: brew install python@3.11"
-        exit 1
-    fi
-    
-    echo -e "  Python: ${GREEN}$PYVER${NC}"
+
+    echo -e "  Python: ${GREEN}$($PYTHON3 --version)${NC}"
 
     # Create venv
     if [ ! -d "$VENV_DIR" ]; then
         echo "  Creating virtual environment..."
-        python3 -m venv "$VENV_DIR"
+        "$PYTHON3" -m venv "$VENV_DIR"
     fi
     source "$VENV_DIR/bin/activate"
 
