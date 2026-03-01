@@ -19,16 +19,69 @@ echo -e "${BOLD}VoicePages Installer${NC}"
 echo -e "AI Multi-Voice Audiobook Server"
 echo ""
 
-# Check prerequisites
-MISSING=""
-command -v python3 &>/dev/null || MISSING="$MISSING python3"
-command -v git &>/dev/null || MISSING="$MISSING git"
-
-if [ -n "$MISSING" ]; then
-    echo -e "${RED}Missing required tools:$MISSING${NC}"
-    echo "Install them first (e.g., brew install python3 git)"
+# Ensure git is present
+if ! command -v git &>/dev/null; then
+    echo -e "${RED}git not found. Install it first (e.g., brew install git).${NC}"
     exit 1
 fi
+
+# Ensure Python 3.10+ is available, auto-install if needed
+ensure_python() {
+    local PYTHON=""
+    for cmd in python3.13 python3.12 python3.11 python3.10 python3; do
+        if command -v "$cmd" &>/dev/null; then
+            local major minor
+            major=$("$cmd" -c "import sys; print(sys.version_info.major)")
+            minor=$("$cmd" -c "import sys; print(sys.version_info.minor)")
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
+                PYTHON="$cmd"
+                break
+            fi
+        fi
+    done
+
+    if [ -n "$PYTHON" ]; then
+        echo -e "  Python: ${GREEN}$($PYTHON --version)${NC}"
+        return 0
+    fi
+
+    echo -e "  ${YELLOW}Python 3.10+ not found — attempting to install...${NC}"
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        if ! command -v brew &>/dev/null; then
+            echo -e "${RED}Homebrew not found. Install it from https://brew.sh then re-run setup.${NC}"
+            exit 1
+        fi
+        brew install python@3.11
+    elif command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq
+        sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y python3.11
+    else
+        echo -e "${RED}Cannot auto-install Python on this system.${NC}"
+        echo "Install Python 3.10+ manually: https://www.python.org/downloads/"
+        exit 1
+    fi
+
+    # Verify after install
+    for cmd in python3.11 python3.10 python3; do
+        if command -v "$cmd" &>/dev/null; then
+            local major minor
+            major=$("$cmd" -c "import sys; print(sys.version_info.major)")
+            minor=$("$cmd" -c "import sys; print(sys.version_info.minor)")
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
+                echo -e "  Python: ${GREEN}$($cmd --version)${NC}"
+                return 0
+            fi
+        fi
+    done
+
+    echo -e "${RED}Python 3.10+ install failed. Please install manually.${NC}"
+    exit 1
+}
+
+ensure_python
 
 # Check for node/npm (needed to build web app)
 HAS_NODE=false
