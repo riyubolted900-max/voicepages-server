@@ -3,3 +3,5 @@ __pycache__/
 venv/
 *.zip
 storage/
+*.log
+.voicepages.pid
