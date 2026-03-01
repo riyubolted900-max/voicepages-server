@@ -36,7 +36,7 @@ if command -v node &>/dev/null && command -v npm &>/dev/null; then
     HAS_NODE=true
 fi
 
-# Clone or update server
+# Clone or update both repos
 echo -e "Setting up in: ${BOLD}$INSTALL_DIR${NC}"
 mkdir -p "$INSTALL_DIR"
 
@@ -48,23 +48,21 @@ else
     git clone --quiet "https://github.com/$REPO_ORG/voicepages-server.git" "$INSTALL_DIR/voicepages-server"
 fi
 
-# Clone or update web (only if node available)
-if $HAS_NODE; then
-    if [ -d "$INSTALL_DIR/voicepages-web/.git" ]; then
-        echo "  Updating voicepages-web..."
-        cd "$INSTALL_DIR/voicepages-web" && git pull --quiet
-    else
-        echo "  Cloning voicepages-web..."
-        git clone --quiet "https://github.com/$REPO_ORG/voicepages-web.git" "$INSTALL_DIR/voicepages-web"
-    fi
+if [ -d "$INSTALL_DIR/voicepages-web/.git" ]; then
+    echo "  Updating voicepages-web..."
+    cd "$INSTALL_DIR/voicepages-web" && git pull --quiet
+else
+    echo "  Cloning voicepages-web..."
+    git clone --quiet "https://github.com/$REPO_ORG/voicepages-web.git" "$INSTALL_DIR/voicepages-web"
+fi
 
-    # Build web app
+# Build and deploy web app (requires node/npm)
+if $HAS_NODE; then
     echo "  Building web app..."
     cd "$INSTALL_DIR/voicepages-web"
     npm install --silent 2>&1 | tail -1
     npm run build --silent 2>&1 | tail -1
 
-    # Copy build to server
     rm -rf "$INSTALL_DIR/voicepages-server/web"
     cp -r "$INSTALL_DIR/voicepages-web/dist" "$INSTALL_DIR/voicepages-server/web"
     echo -e "  Web app: ${GREEN}built and deployed${NC}"
